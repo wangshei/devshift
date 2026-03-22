@@ -4,6 +4,8 @@ const path = require('path');
 const { PORT } = require('./utils/config');
 const log = require('./utils/logger');
 const { migrate } = require('./db');
+const scheduler = require('./services/scheduler');
+const { getCreditUsage } = require('./services/planner');
 
 const app = express();
 
@@ -24,11 +26,18 @@ app.use('/api/agent', require('./routes/agent'));
 app.use('/api/timeline', require('./routes/timeline'));
 app.use('/api/changelog', require('./routes/changelog'));
 
+// Credit usage endpoint
+app.get('/api/credits', (req, res) => {
+  res.json(getCreditUsage());
+});
+
 // Run migrations on startup
 migrate();
 
 app.listen(PORT, () => {
   log.info(`DevShift server running on http://localhost:${PORT}`);
+  // Start the scheduler
+  scheduler.start();
 });
 
 module.exports = app;
