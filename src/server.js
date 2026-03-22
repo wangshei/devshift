@@ -31,6 +31,14 @@ app.get('/api/credits', (req, res) => {
   res.json(getCreditUsage());
 });
 
+// Serve dashboard in production
+const dashboardDist = path.join(__dirname, '..', 'dashboard', 'dist');
+app.use(express.static(dashboardDist));
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) return next();
+  res.sendFile(path.join(dashboardDist, 'index.html'));
+});
+
 // Run migrations on startup
 migrate();
 
