@@ -6,6 +6,7 @@ const log = require('./utils/logger');
 const { migrate } = require('./db');
 const scheduler = require('./services/scheduler');
 const { getCreditUsage } = require('./services/planner');
+const telegram = require('./services/telegram');
 
 const app = express();
 
@@ -46,6 +47,8 @@ app.listen(PORT, () => {
   log.info(`DevShift server running on http://localhost:${PORT}`);
   // Start the scheduler
   scheduler.start();
+  // Start Telegram bot (if configured)
+  telegram.start();
 });
 
 module.exports = app;
