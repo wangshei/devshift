@@ -105,9 +105,19 @@ router.delete('/:id', (req, res) => {
   res.json({ deleted: true });
 });
 
-// POST /api/tasks/:id/execute — manual trigger (stub for Phase 2)
-router.post('/:id/execute', (req, res) => {
-  res.status(501).json({ error: 'Execution engine not yet implemented' });
+// POST /api/tasks/:id/execute — manual trigger
+router.post('/:id/execute', async (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  try {
+    const { executeTask } = require('../services/executor');
+    const result = await executeTask(req.params.id);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = router;

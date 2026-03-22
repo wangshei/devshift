@@ -20,6 +20,9 @@ app.use('/api/projects', require('./routes/projects'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/schedule', require('./routes/schedule'));
 app.use('/api/providers', require('./routes/providers'));
+app.use('/api/agent', require('./routes/agent'));
+app.use('/api/timeline', require('./routes/timeline'));
+app.use('/api/changelog', require('./routes/changelog'));
 
 // Run migrations on startup
 migrate();
