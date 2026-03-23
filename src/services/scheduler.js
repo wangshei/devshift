@@ -1,7 +1,7 @@
 const cron = require('node-cron');
 const { getDb } = require('../db');
 const { executeTask } = require('./executor');
-const { canAffordTask, getMaxTasksForWindow, getTasksExecutedThisWindow } = require('./planner');
+const { canAffordTask, getMaxTasksForWindow, getTasksExecutedThisWindow, getCreditUsage } = require('./planner');
 const log = require('../utils/logger');
 
 let schedulerRunning = false;
@@ -40,7 +40,7 @@ function isOffHours() {
 
   // Check active days
   const activeDays = (schedule.active_days || '1,2,3,4,5').split(',').map(Number);
-  if (!activeDays.includes(localDay)) return true; // Weekend = off-hours for user = agent can work
+  if (!activeDays.includes(localDay)) return true;
 
   // Check active hours
   const [startH, startM] = (schedule.active_hours_start || '09:00').split(':').map(Number);
@@ -50,7 +50,6 @@ function isOffHours() {
   const startMinutes = startH * 60 + startM;
   const endMinutes = endH * 60 + endM;
 
-  // Off-hours = outside active hours
   return currentMinutes < startMinutes || currentMinutes >= endMinutes;
 }
 
@@ -73,6 +72,10 @@ function pickNextTask() {
 
 /**
  * The main scheduler tick — runs every minute.
+ *
+ * Two modes:
+ * - Work Mode: when there are backlog tasks → improve prompts, decompose, execute
+ * - Smart Mode: when backlog is empty + credits available → proactive improvements
  */
 async function tick() {
   if (schedulerRunning) {
@@ -93,25 +96,66 @@ async function tick() {
     return;
   }
 
-  const task = pickNextTask();
-  if (!task) {
-    log.debug('Scheduler: no tasks available');
-    return;
-  }
-
-  // Check credit budget
-  if (!canAffordTask(task)) {
-    log.info('Scheduler: insufficient credits for next task');
-    return;
-  }
-
   schedulerRunning = true;
-  log.info(`Scheduler: executing "${task.title}"`);
 
   try {
-    await executeTask(task.id);
+    // --- WORK MODE: process backlog tasks ---
+    const task = pickNextTask();
+
+    if (task) {
+      // Check if this task needs prompt improvement first
+      const workMode = require('./work-mode');
+      if (workMode.needsImprovement(task.title)) {
+        log.info(`[WorkMode] Improving vague task: "${task.title}"`);
+        try {
+          const result = await workMode.improvePrompt(task.id);
+          if (result.improved && result.subtaskCount > 0) {
+            // Task was decomposed — subtasks are now in backlog, will be picked up next tick
+            log.info(`[WorkMode] Decomposed into ${result.subtaskCount} subtasks`);
+            return;
+          }
+          // If improved but not decomposed, the task title/description is now better
+          // Re-fetch it and continue to execution
+        } catch (e) {
+          log.warn(`[WorkMode] Improvement failed, executing as-is: ${e.message}`);
+        }
+      }
+
+      // Check credit budget
+      if (!canAffordTask(task)) {
+        log.info('Scheduler: insufficient credits for next task');
+        return;
+      }
+
+      // Re-fetch task (may have been improved)
+      const freshTask = getDb().prepare('SELECT * FROM tasks WHERE id = ? AND status IN (\'backlog\', \'queued\')').get(task.id);
+      if (freshTask) {
+        log.info(`Scheduler [WorkMode]: executing "${freshTask.title}"`);
+        await executeTask(freshTask.id);
+      }
+      return;
+    }
+
+    // --- SMART MODE: no backlog tasks, use remaining credits proactively ---
+    const credits = getCreditUsage();
+    if (credits.availablePercent > 10) {
+      // There are credits to burn and no user tasks — be proactive
+      log.info('[SmartMode] No backlog tasks, running proactive analysis...');
+      try {
+        const smartMode = require('./smart-mode');
+        const result = await smartMode.run();
+        if (result && result.success) {
+          log.info(`[SmartMode] Created ${result.tasksCreated} improvement tasks (${result.analysis})`);
+          // Next tick will pick up the generated tasks in Work Mode
+        }
+      } catch (e) {
+        log.warn(`[SmartMode] Failed: ${e.message}`);
+      }
+    } else {
+      log.debug('Scheduler: no tasks and credits low — idle');
+    }
   } catch (e) {
-    log.error(`Scheduler execution error: ${e.message}`);
+    log.error(`Scheduler error: ${e.message}`);
   } finally {
     schedulerRunning = false;
   }

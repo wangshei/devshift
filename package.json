@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node src/server.js",
+    "dev": "node src/server.js & cd dashboard && npx vite",
+    "dev:api": "node src/server.js",
     "dev:dashboard": "cd dashboard && npx vite",
     "build": "cd dashboard && npx vite build",
     "setup": "node scripts/setup.js"
