@@ -7,9 +7,12 @@
     "devshift": "./bin/devshift.js"
   },
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node src/server.js & cd dashboard && npx vite",
-    "dev:api": "node src/server.js",
+    "start": "node bin/devshift.js start",
+    "stop": "node bin/devshift.js stop",
+    "restart": "node bin/devshift.js restart",
+    "status": "node bin/devshift.js status",
+    "logs": "node bin/devshift.js logs",
+    "dev": "node src/server.js",
     "dev:dashboard": "cd dashboard && npx vite",
     "build": "cd dashboard && npx vite build",
     "setup": "node scripts/setup.js"
