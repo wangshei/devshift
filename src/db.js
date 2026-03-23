@@ -88,7 +88,8 @@ function migrate() {
       max_tasks_per_window INTEGER DEFAULT 6,
       reserve_percent INTEGER DEFAULT 40,
       telegram_bot_token TEXT,
-      telegram_chat_id TEXT
+      telegram_chat_id TEXT,
+      setup_complete INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS executions (
@@ -119,6 +120,12 @@ function migrate() {
   const existing = database.prepare('SELECT id FROM schedule WHERE id = 1').get();
   if (!existing) {
     database.prepare('INSERT INTO schedule (id) VALUES (1)').run();
+  }
+
+  // Migration: add setup_complete column if missing (existing DBs)
+  const cols = database.prepare("PRAGMA table_info(schedule)").all();
+  if (!cols.find(c => c.name === 'setup_complete')) {
+    database.exec('ALTER TABLE schedule ADD COLUMN setup_complete INTEGER DEFAULT 0');
   }
 
   log.info('Database migration complete');

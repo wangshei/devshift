@@ -20,6 +20,19 @@ class AntigravityProvider extends BaseProvider {
     return { tier: 'free', raw: 'Free for individuals' };
   }
 
+  async test() {
+    try {
+      const output = execSync('agy --headless "Respond with exactly: DEVSHIFT_OK"', {
+        encoding: 'utf-8',
+        timeout: 30000,
+      });
+      const connected = output.includes('DEVSHIFT_OK') || output.length > 0;
+      return { connected, output: output.trim().slice(0, 500) };
+    } catch (e) {
+      return { connected: false, error: e.message.slice(0, 300) };
+    }
+  }
+
   async execute(task, project, options = {}) {
     const timeout = options.timeout || 10 * 60 * 1000;
     const prompt = this._buildPrompt(task, project);

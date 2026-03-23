@@ -1,5 +1,8 @@
 const { Router } = require('express');
 const { v4: uuid } = require('uuid');
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
 const { getDb } = require('../db');
 
 const router = Router();
@@ -80,6 +83,60 @@ router.delete('/:id', (req, res) => {
   db.prepare('DELETE FROM tasks WHERE project_id = ?').run(req.params.id);
   db.prepare('DELETE FROM projects WHERE id = ?').run(req.params.id);
   res.json({ deleted: true });
+});
+
+// POST /api/projects/from-path — one-click add from a directory path
+router.post('/from-path', (req, res) => {
+  const db = getDb();
+  const { path: dirPath } = req.body;
+  if (!dirPath) return res.status(400).json({ error: 'path is required' });
+
+  const cleanPath = dirPath.trim().replace(/\/+$/, '');
+  if (!fs.existsSync(cleanPath) || !fs.statSync(cleanPath).isDirectory()) {
+    return res.status(400).json({ error: 'Path does not exist or is not a directory' });
+  }
+
+  // Check if already added
+  const existing = db.prepare('SELECT * FROM projects WHERE repo_path = ?').get(cleanPath);
+  if (existing) return res.status(409).json({ error: 'Project already added', project: existing });
+
+  // Auto-detect name from package.json or folder name
+  let name = path.basename(cleanPath);
+  let context = null;
+  const pkgPath = path.join(cleanPath, 'package.json');
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      if (pkg.name) name = pkg.name;
+      if (pkg.description) context = pkg.description;
+    } catch { /* ignore */ }
+  }
+
+  // Auto-detect git remote
+  let githubRemote = null;
+  try {
+    githubRemote = execSync('git remote get-url origin', {
+      cwd: cleanPath, encoding: 'utf-8', timeout: 5000,
+    }).trim();
+  } catch { /* no remote */ }
+
+  // Read CLAUDE.md if present
+  const claudePath = path.join(cleanPath, 'CLAUDE.md');
+  if (fs.existsSync(claudePath)) {
+    try {
+      const claudeContent = fs.readFileSync(claudePath, 'utf-8').slice(0, 1000);
+      context = context ? `${context}\n\n${claudeContent}` : claudeContent;
+    } catch { /* ignore */ }
+  }
+
+  const id = uuid();
+  db.prepare(`
+    INSERT INTO projects (id, name, repo_path, github_remote, context)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(id, name, cleanPath, githubRemote, context);
+
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+  res.status(201).json(project);
 });
 
 module.exports = router;

@@ -16,6 +16,15 @@ class CursorProvider extends BaseProvider {
     }
   }
 
+  async test() {
+    try {
+      execSync('which cursor', { stdio: 'ignore', timeout: 5000 });
+      return { connected: true, output: 'Cursor CLI found' };
+    } catch {
+      return { connected: false, error: 'Cursor CLI not found' };
+    }
+  }
+
   async getPlanInfo() {
     return { tier: 'unknown', raw: 'Cursor plan detection not yet implemented' };
   }

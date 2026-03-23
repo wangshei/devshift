@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
 import Timeline from './pages/Timeline';
 import Projects from './pages/Projects';
 import Settings from './pages/Settings';
+import Setup from './pages/Setup';
 
 function NavIcon({ d }) {
   return (
@@ -13,6 +14,30 @@ function NavIcon({ d }) {
 }
 
 function App() {
+  const [needsSetup, setNeedsSetup] = useState(null); // null = loading
+
+  useEffect(() => {
+    fetch('/api/setup/status')
+      .then(r => r.json())
+      .then(d => setNeedsSetup(d.needsSetup))
+      .catch(() => setNeedsSetup(false));
+  }, []);
+
+  // Loading state
+  if (needsSetup === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-accent font-mono text-lg animate-pulse">DevShift</div>
+      </div>
+    );
+  }
+
+  // Setup wizard
+  if (needsSetup) {
+    return <Setup onComplete={() => setNeedsSetup(false)} />;
+  }
+
+  // Main app
   return (
     <BrowserRouter>
       <div className="min-h-screen flex flex-col md:flex-row">

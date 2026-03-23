@@ -26,6 +26,7 @@ app.use('/api/providers', require('./routes/providers'));
 app.use('/api/agent', require('./routes/agent'));
 app.use('/api/timeline', require('./routes/timeline'));
 app.use('/api/changelog', require('./routes/changelog'));
+app.use('/api/setup', require('./routes/setup'));
 
 // Credit usage endpoint
 app.get('/api/credits', (req, res) => {

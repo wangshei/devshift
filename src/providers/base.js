@@ -18,6 +18,11 @@ class BaseProvider {
     throw new Error('getPlanInfo() not implemented');
   }
 
+  /** Quick smoke test — returns { connected: bool, output?, error? } */
+  async test() {
+    throw new Error('test() not implemented');
+  }
+
   /**
    * Execute a task
    * @param {object} task - The task record

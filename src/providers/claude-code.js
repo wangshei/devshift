@@ -34,6 +34,19 @@ class ClaudeCodeProvider extends BaseProvider {
     }
   }
 
+  async test() {
+    try {
+      const output = execSync('claude -p "Respond with exactly: DEVSHIFT_OK" --output-format text', {
+        encoding: 'utf-8',
+        timeout: 30000,
+      });
+      const connected = output.includes('DEVSHIFT_OK') || output.length > 0;
+      return { connected, output: output.trim().slice(0, 500) };
+    } catch (e) {
+      return { connected: false, error: e.message.slice(0, 300) };
+    }
+  }
+
   /**
    * Execute a task using claude -p
    * @param {object} task
