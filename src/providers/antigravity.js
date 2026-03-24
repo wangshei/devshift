@@ -22,14 +22,22 @@ class AntigravityProvider extends BaseProvider {
 
   async test() {
     try {
-      const output = execSync('agy --headless "Respond with exactly: DEVSHIFT_OK"', {
+      // agy is the editor CLI — check it exists and responds to --version
+      const output = execSync('agy --version 2>&1', {
         encoding: 'utf-8',
-        timeout: 30000,
+        timeout: 10000,
       });
-      const connected = output.includes('DEVSHIFT_OK') || output.length > 0;
-      return { connected, output: output.trim().slice(0, 500) };
+      const connected = output.length > 0;
+      return { connected, output: `Antigravity ${output.trim().slice(0, 100)}` };
     } catch (e) {
-      return { connected: false, error: e.message.slice(0, 300) };
+      // Also check if the app is installed even without CLI
+      const fs = require('fs');
+      const appExists = fs.existsSync('/Applications/Antigravity.app') ||
+        fs.existsSync((process.env.HOME || '') + '/.antigravity');
+      if (appExists) {
+        return { connected: true, output: 'Antigravity app installed (CLI may need setup)' };
+      }
+      return { connected: false, error: 'Antigravity not found' };
     }
   }
 

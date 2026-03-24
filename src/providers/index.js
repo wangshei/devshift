@@ -8,16 +8,40 @@ const KNOWN_PROVIDERS = [
   { id: 'cursor', name: 'Cursor', cli: 'cursor' },
 ];
 
+const fs = require('fs');
+const path = require('path');
+
 /**
  * Check if a CLI command exists on the system.
+ * Also checks common app locations for macOS apps.
  */
 function commandExists(cmd) {
+  // Check PATH first
   try {
     execSync(`which ${cmd}`, { stdio: 'ignore' });
     return true;
-  } catch {
-    return false;
+  } catch { /* not on PATH */ }
+
+  // Check common macOS app locations
+  const appChecks = {
+    cursor: [
+      '/Applications/Cursor.app',
+      path.join(process.env.HOME || '', 'Applications/Cursor.app'),
+    ],
+    agy: [
+      '/Applications/Antigravity.app',
+      path.join(process.env.HOME || '', '.antigravity'),
+    ],
+  };
+
+  const paths = appChecks[cmd];
+  if (paths) {
+    for (const p of paths) {
+      if (fs.existsSync(p)) return true;
+    }
   }
+
+  return false;
 }
 
 /**

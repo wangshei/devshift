@@ -17,12 +17,28 @@ class CursorProvider extends BaseProvider {
   }
 
   async test() {
+    // Check CLI first
     try {
       execSync('which cursor', { stdio: 'ignore', timeout: 5000 });
-      return { connected: true, output: 'Cursor CLI found' };
-    } catch {
-      return { connected: false, error: 'Cursor CLI not found' };
+      return { connected: true, output: 'Cursor CLI found on PATH' };
+    } catch { /* not on PATH */ }
+
+    // Check if Cursor app is installed (macOS)
+    const fs = require('fs');
+    const path = require('path');
+    const appPaths = [
+      '/Applications/Cursor.app',
+      path.join(process.env.HOME || '', 'Applications/Cursor.app'),
+    ];
+    for (const p of appPaths) {
+      if (fs.existsSync(p)) {
+        return {
+          connected: true,
+          output: 'Cursor app installed (enable CLI: Cmd+Shift+P → "Install cursor command")',
+        };
+      }
     }
+    return { connected: false, error: 'Cursor not found' };
   }
 
   async getPlanInfo() {

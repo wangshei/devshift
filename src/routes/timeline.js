@@ -93,4 +93,89 @@ router.get('/digest', (req, res) => {
   });
 });
 
+// GET /api/timeline/dashboard — per-project summary for command center view
+router.get('/dashboard', (req, res) => {
+  const db = getDb();
+  const projects = db.prepare('SELECT * FROM projects ORDER BY priority ASC, created_at DESC').all();
+  const schedule = db.prepare('SELECT * FROM schedule WHERE id = 1').get();
+  const today = new Date().toISOString().split('T')[0];
+
+  const projectSummaries = projects.map(project => {
+    const active = db.prepare(`
+      SELECT * FROM tasks WHERE project_id = ? AND status = 'in_progress'
+    `).all(project.id);
+
+    const completedToday = db.prepare(`
+      SELECT COUNT(*) as count FROM tasks
+      WHERE project_id = ? AND status = 'done' AND completed_at > ?
+    `).get(project.id, today).count;
+
+    const needsReview = db.prepare(`
+      SELECT COUNT(*) as count FROM tasks
+      WHERE project_id = ? AND (status = 'needs_review' OR status = 'waiting_human'
+        OR (task_type = 'human' AND status != 'done'))
+    `).get(project.id).count;
+
+    const backlog = db.prepare(`
+      SELECT COUNT(*) as count FROM tasks
+      WHERE project_id = ? AND status IN ('backlog', 'queued') AND task_type = 'agent'
+    `).get(project.id).count;
+
+    const nextTask = db.prepare(`
+      SELECT title FROM tasks
+      WHERE project_id = ? AND status IN ('backlog', 'queued') AND task_type = 'agent'
+      ORDER BY priority ASC,
+        CASE tier WHEN 1 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 ELSE 3 END,
+        created_at ASC
+      LIMIT 1
+    `).get(project.id);
+
+    return {
+      project,
+      activeTask: active[0] || null,
+      completedToday,
+      needsReview,
+      backlog,
+      nextTask: nextTask?.title || null,
+    };
+  });
+
+  res.json({ projects: projectSummaries, schedule });
+});
+
+// GET /api/timeline/project/:id — full timeline for one project
+router.get('/project/:id', (req, res) => {
+  const db = getDb();
+  const projectId = req.params.id;
+
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const humanTasks = db.prepare(`
+    SELECT * FROM tasks WHERE project_id = ?
+      AND (task_type IN ('human', 'blocked') OR status = 'waiting_human' OR status = 'needs_review')
+    ORDER BY priority ASC, created_at DESC
+  `).all(projectId);
+
+  const completed = db.prepare(`
+    SELECT * FROM tasks WHERE project_id = ? AND status = 'done'
+    ORDER BY completed_at DESC LIMIT 20
+  `).all(projectId);
+
+  const inProgress = db.prepare(`
+    SELECT * FROM tasks WHERE project_id = ? AND status = 'in_progress'
+  `).all(projectId);
+
+  const planned = db.prepare(`
+    SELECT * FROM tasks WHERE project_id = ?
+      AND status IN ('backlog', 'queued') AND task_type = 'agent'
+    ORDER BY priority ASC,
+      CASE tier WHEN 1 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 ELSE 3 END,
+      created_at ASC
+    LIMIT 20
+  `).all(projectId);
+
+  res.json({ project, humanTasks, completed, inProgress, planned });
+});
+
 module.exports = router;
