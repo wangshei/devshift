@@ -65,11 +65,17 @@ async function executeTask(taskId) {
 
   log.info(`Executing task "${task.title}" via ${providerRecord.name}`);
 
-  // Create a branch for this task
+  // Create a branch for this task — always start from main/master
   const branchName = `devshift/${task.id.slice(0, 8)}-${slugify(task.title)}`;
   let mainBranch;
   try {
+    // Find the default branch (main or master)
     mainBranch = gitUtils.currentBranch(project.repo_path);
+    if (mainBranch.startsWith('devshift/')) {
+      // We're on a devshift branch — go back to main first
+      try { gitUtils.checkout(project.repo_path, 'main'); mainBranch = 'main'; }
+      catch { try { gitUtils.checkout(project.repo_path, 'master'); mainBranch = 'master'; } catch { /* stay where we are */ } }
+    }
     gitUtils.createBranch(project.repo_path, branchName);
     db.prepare('UPDATE tasks SET branch_name = ? WHERE id = ?').run(branchName, taskId);
   } catch (e) {

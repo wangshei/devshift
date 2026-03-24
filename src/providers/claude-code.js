@@ -58,7 +58,7 @@ class ClaudeCodeProvider extends BaseProvider {
     const timeout = options.timeout || 10 * 60 * 1000; // 10 min default
 
     const prompt = this._buildPrompt(task, project);
-    const args = ['-p', prompt, '--output-format', 'text'];
+    const args = ['-p', prompt, '--output-format', 'text', '--permission-mode', 'bypassPermissions'];
     if (model === 'opus') {
       args.push('--model', 'opus');
     }

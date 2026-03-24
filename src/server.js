@@ -44,6 +44,10 @@ app.get('*', (req, res, next) => {
 // Run migrations on startup
 migrate();
 
+// Auto-detect providers on startup
+const { detectProviders } = require('./providers');
+detectProviders();
+
 app.listen(PORT, () => {
   log.info(`DevShift server running on http://localhost:${PORT}`);
   // Start the scheduler
