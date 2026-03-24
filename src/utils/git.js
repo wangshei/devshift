@@ -98,7 +98,65 @@ function diffSummary(repoPath) {
   }
 }
 
+/**
+ * Get the full diff of a branch against main.
+ */
+function branchDiff(repoPath, branchName, baseBranch = 'main') {
+  try {
+    return git(repoPath, 'diff', `${baseBranch}...${branchName}`);
+  } catch {
+    try { return git(repoPath, 'diff', `master...${branchName}`); }
+    catch { return ''; }
+  }
+}
+
+/**
+ * Get diff stat (files changed summary) for a branch against main.
+ */
+function branchDiffStat(repoPath, branchName, baseBranch = 'main') {
+  try {
+    return git(repoPath, 'diff', '--stat', `${baseBranch}...${branchName}`);
+  } catch {
+    try { return git(repoPath, 'diff', '--stat', `master...${branchName}`); }
+    catch { return ''; }
+  }
+}
+
+/**
+ * Merge a branch into the current branch (fast-forward or merge commit).
+ */
+function mergeBranch(repoPath, branchName) {
+  git(repoPath, 'merge', branchName, '--no-edit');
+  log.info(`Merged ${branchName}`);
+}
+
+/**
+ * Delete a local branch.
+ */
+function deleteBranch(repoPath, branchName) {
+  git(repoPath, 'branch', '-D', branchName);
+  log.info(`Deleted branch ${branchName}`);
+}
+
+/**
+ * Get the default branch name (main or master).
+ */
+function getDefaultBranch(repoPath) {
+  try {
+    git(repoPath, 'rev-parse', '--verify', 'main');
+    return 'main';
+  } catch {
+    try {
+      git(repoPath, 'rev-parse', '--verify', 'master');
+      return 'master';
+    } catch {
+      return currentBranch(repoPath);
+    }
+  }
+}
+
 module.exports = {
   git, currentBranch, createBranch, commitAll, push,
   checkout, tag, hasChanges, diffSummary,
+  branchDiff, branchDiffStat, mergeBranch, deleteBranch, getDefaultBranch,
 };

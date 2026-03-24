@@ -120,4 +120,71 @@ router.post('/:id/execute', async (req, res) => {
   }
 });
 
+// GET /api/tasks/:id/diff — get the diff for a completed task's branch
+router.get('/:id/diff', (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!task.branch_name) return res.json({ diff: '', stat: '', error: 'No branch' });
+
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const gitUtils = require('../utils/git');
+  try {
+    const defaultBranch = gitUtils.getDefaultBranch(project.repo_path);
+    const diff = gitUtils.branchDiff(project.repo_path, task.branch_name, defaultBranch);
+    const stat = gitUtils.branchDiffStat(project.repo_path, task.branch_name, defaultBranch);
+    res.json({ diff, stat, branch: task.branch_name, baseBranch: defaultBranch });
+  } catch (e) {
+    res.json({ diff: '', stat: '', error: e.message });
+  }
+});
+
+// POST /api/tasks/:id/approve — merge the task branch into main
+router.post('/:id/approve', (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!task.branch_name) return res.status(400).json({ error: 'No branch to merge' });
+
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const gitUtils = require('../utils/git');
+  try {
+    const defaultBranch = gitUtils.getDefaultBranch(project.repo_path);
+    gitUtils.checkout(project.repo_path, defaultBranch);
+    gitUtils.mergeBranch(project.repo_path, task.branch_name);
+    gitUtils.deleteBranch(project.repo_path, task.branch_name);
+
+    db.prepare("UPDATE tasks SET status = 'done' WHERE id = ?").run(task.id);
+
+    res.json({ merged: true, branch: task.branch_name, into: defaultBranch });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/tasks/:id/reject — delete the task branch, mark as failed
+router.post('/:id/reject', (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
+
+  if (task.branch_name && project) {
+    const gitUtils = require('../utils/git');
+    try {
+      const defaultBranch = gitUtils.getDefaultBranch(project.repo_path);
+      gitUtils.checkout(project.repo_path, defaultBranch);
+      gitUtils.deleteBranch(project.repo_path, task.branch_name);
+    } catch { /* branch may not exist */ }
+  }
+
+  db.prepare("UPDATE tasks SET status = 'failed', execution_log = 'Rejected by user' WHERE id = ?").run(task.id);
+  res.json({ rejected: true });
+});
+
 module.exports = router;

@@ -8,6 +8,9 @@ const github = require('./github');
 // Provider class instances (lazy-loaded)
 const providerInstances = {};
 
+// Per-repo execution lock — prevents two tasks running on the same repo simultaneously
+const repoLocks = new Set();
+
 function getProviderInstance(providerId) {
   if (providerInstances[providerId]) return providerInstances[providerId];
 
@@ -39,6 +42,13 @@ async function executeTask(taskId) {
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
   if (!project) throw new Error(`Project ${task.project_id} not found`);
 
+  // Acquire repo lock — prevent concurrent execution on same repo
+  if (repoLocks.has(project.repo_path)) {
+    log.warn(`Repo ${project.repo_path} is locked — skipping task "${task.title}"`);
+    return { success: false, taskId, error: 'Repo is busy with another task' };
+  }
+  repoLocks.add(project.repo_path);
+
   // Mark as in_progress
   const now = new Date().toISOString();
   db.prepare("UPDATE tasks SET status = 'in_progress', started_at = ? WHERE id = ?").run(now, taskId);
@@ -50,12 +60,12 @@ async function executeTask(taskId) {
     : pickProvider(task.tier);
 
   if (!providerRecord) {
-    return failTask(db, taskId, execId, project.id, 'No available provider');
+    return failTask(db, taskId, execId, project.id, 'No available provider', '', 0, project.repo_path);
   }
 
   const provider = getProviderInstance(providerRecord.id);
   if (!provider) {
-    return failTask(db, taskId, execId, project.id, `Provider ${providerRecord.id} not implemented`);
+    return failTask(db, taskId, execId, project.id, `Provider ${providerRecord.id} not implemented`, '', 0, project.repo_path);
   }
 
   db.prepare(`
@@ -102,7 +112,7 @@ async function executeTask(taskId) {
     }
 
     return failTask(db, taskId, execId, project.id,
-      result.error || 'Execution failed', result.output, durationMin);
+      result.error || 'Execution failed', result.output, durationMin, project.repo_path);
   }
 
   // Commit any changes
@@ -114,6 +124,12 @@ async function executeTask(taskId) {
     }
   } catch (e) {
     log.warn(`Could not commit: ${e.message}`);
+  }
+
+  // Run reviewer agent on the changes
+  let reviewResult = null;
+  if (commitHash) {
+    reviewResult = await runReviewer(project, branchName, task, providerRecord);
   }
 
   // Push and create PR for tier 2+ tasks, auto-merge for tier 1 or pre-approved
@@ -151,9 +167,9 @@ async function executeTask(taskId) {
   // Determine final status
   const finalStatus = autoMerge ? 'done' : 'needs_review';
 
-  // Generate review instructions for non-auto tasks
+  // Generate review instructions from reviewer agent or fallback
   const reviewInstructions = autoMerge ? null
-    : `Review the changes in branch "${branchName}". ${prUrl ? `PR: ${prUrl}` : ''}`;
+    : reviewResult?.review || `Review the changes in branch "${branchName}". ${prUrl ? `PR: ${prUrl}` : ''}`;
 
   // Update task
   db.prepare(`
@@ -173,6 +189,7 @@ async function executeTask(taskId) {
 
   log.info(`Task "${task.title}" completed → ${finalStatus} (${durationMin}min)`);
 
+  repoLocks.delete(project.repo_path);
   return {
     success: true,
     taskId,
@@ -184,13 +201,73 @@ async function executeTask(taskId) {
   };
 }
 
-function failTask(db, taskId, execId, projectId, error, output = '', durationMin = 0) {
+function failTask(db, taskId, execId, projectId, error, output = '', durationMin = 0, repoPath = null) {
+  if (repoPath) repoLocks.delete(repoPath);
   db.prepare("UPDATE tasks SET status = 'failed', execution_log = ?, actual_minutes = ? WHERE id = ?")
     .run(error, durationMin, taskId);
   db.prepare("UPDATE executions SET status = 'failed', error = ?, output = ?, completed_at = datetime('now') WHERE id = ?")
     .run(error, output || '', execId);
   log.error(`Task ${taskId} failed: ${error}`);
   return { success: false, taskId, error };
+}
+
+/**
+ * Run a reviewer agent on the changes — a second Claude pass that checks the work.
+ * Returns { review, issues, approved } or null if review fails.
+ */
+async function runReviewer(project, branchName, task, providerRecord) {
+  // Only use Claude Code for reviews
+  if (providerRecord.id !== 'claude_code') return null;
+
+  const gitUtils = require('../utils/git');
+  let diff;
+  try {
+    const defaultBranch = gitUtils.getDefaultBranch(project.repo_path);
+    diff = gitUtils.branchDiff(project.repo_path, branchName, defaultBranch);
+  } catch { return null; }
+
+  if (!diff || diff.length < 10) return null;
+
+  log.info(`[Reviewer] Reviewing changes for "${task.title}"`);
+
+  const prompt = `You are a code reviewer. A coding agent just completed this task:
+"${task.title}"
+
+Here is the diff of changes:
+
+\`\`\`diff
+${diff.slice(0, 8000)}
+\`\`\`
+
+Review the changes and respond with JSON only:
+{
+  "approved": true or false,
+  "summary": "1-2 sentence summary of what was done",
+  "issues": ["list of issues if any, empty array if none"],
+  "what_to_check": "specific thing the human should verify"
+}`;
+
+  try {
+    const { execSync } = require('child_process');
+    const output = execSync(
+      `claude -p ${JSON.stringify(prompt)} --output-format text --permission-mode bypassPermissions`,
+      { cwd: project.repo_path, encoding: 'utf-8', timeout: 60000 }
+    );
+
+    const jsonMatch = output.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const review = JSON.parse(jsonMatch[0]);
+      log.info(`[Reviewer] ${review.approved ? 'Approved' : 'Issues found'}: ${review.summary}`);
+      return {
+        review: `${review.summary}\n\nCheck: ${review.what_to_check}${review.issues?.length ? '\n\nIssues: ' + review.issues.join(', ') : ''}`,
+        approved: review.approved,
+        issues: review.issues || [],
+      };
+    }
+  } catch (e) {
+    log.warn(`[Reviewer] Review failed: ${e.message}`);
+  }
+  return null;
 }
 
 function slugify(text) {

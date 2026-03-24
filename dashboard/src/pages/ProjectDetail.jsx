@@ -70,7 +70,7 @@ export default function ProjectDetail() {
             </h2>
           </div>
           <div className="flex flex-col gap-2">
-            {humanTasks.map(t => <HumanTaskCard key={t.id} task={t} />)}
+            {humanTasks.map(t => <HumanTaskCard key={t.id} task={t} onAction={refetch} />)}
           </div>
         </div>
       )}
