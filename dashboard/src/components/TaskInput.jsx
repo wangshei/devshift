@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApi, api } from '../hooks/useApi';
 
 export default function TaskInput({ onTaskAdded, fixedProjectId = null }) {
@@ -6,6 +6,18 @@ export default function TaskInput({ onTaskAdded, fixedProjectId = null }) {
   const [title, setTitle] = useState('');
   const [projectId, setProjectId] = useState(fixedProjectId || '');
   const [phase, setPhase] = useState('idle'); // idle | submitting | optimizing | done
+  const [optimizeWithAI, setOptimizeWithAI] = useState(true);
+
+  // Persist preference in localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('devshift_optimize_ai');
+    if (saved !== null) setOptimizeWithAI(saved === 'true');
+  }, []);
+
+  const handleToggleOptimize = (val) => {
+    setOptimizeWithAI(val);
+    localStorage.setItem('devshift_optimize_ai', val);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -26,12 +38,14 @@ export default function TaskInput({ onTaskAdded, fixedProjectId = null }) {
       return;
     }
 
-    // Optimize the prompt in background using Work Mode
-    setPhase('optimizing');
-    try {
-      await api('/agent/improve-task', { method: 'POST', body: { task_id: taskId } });
-    } catch {
-      // Optimization is best-effort — task was already created
+    // Optimize the prompt in background using Work Mode (only if toggle is on)
+    if (optimizeWithAI) {
+      setPhase('optimizing');
+      try {
+        await api('/agent/improve-task', { method: 'POST', body: { task_id: taskId } });
+      } catch {
+        // Optimization is best-effort — task was already created
+      }
     }
 
     setPhase('done');
@@ -73,19 +87,26 @@ export default function TaskInput({ onTaskAdded, fixedProjectId = null }) {
           +
         </button>
       </div>
-      {phase === 'submitting' && (
-        <p className="text-[11px] text-muted font-mono pl-1">Adding task...</p>
-      )}
-      {phase === 'optimizing' && (
-        <p className="text-[11px] text-accent font-mono pl-1 animate-pulse">
-          Optimizing prompt with AI...
-        </p>
-      )}
-      {phase === 'done' && (
-        <p className="text-[11px] text-success font-mono pl-1">
-          Task added and optimized ✓
-        </p>
-      )}
+      <div className="flex items-center gap-3 pl-1">
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={optimizeWithAI}
+            onChange={e => handleToggleOptimize(e.target.checked)}
+            className="accent-accent w-3 h-3"
+          />
+          <span className="text-[11px] text-vmuted">Optimize prompt with AI</span>
+          {phase === 'optimizing' && <span className="text-[11px] text-accent animate-pulse">optimizing...</span>}
+        </label>
+        {phase === 'submitting' && (
+          <p className="text-[11px] text-muted font-mono">Adding task...</p>
+        )}
+        {phase === 'done' && (
+          <p className="text-[11px] text-success font-mono">
+            Task added{optimizeWithAI ? ' and optimized' : ''} ✓
+          </p>
+        )}
+      </div>
     </form>
   );
 }

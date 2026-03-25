@@ -68,10 +68,12 @@ async function executeTask(taskId) {
     return failTask(db, taskId, execId, project.id, `Provider ${providerRecord.id} not implemented`, '', 0, project.repo_path);
   }
 
+  const logPath = require('path').join(require('../utils/config').DATA_DIR || 'data', `exec-${execId}.log`);
+
   db.prepare(`
-    INSERT INTO executions (id, task_id, project_id, started_at, status, provider, model)
-    VALUES (?, ?, ?, ?, 'running', ?, ?)
-  `).run(execId, taskId, project.id, now, providerRecord.id, task.model);
+    INSERT INTO executions (id, task_id, project_id, started_at, status, provider, model, log_path)
+    VALUES (?, ?, ?, ?, 'running', ?, ?, ?)
+  `).run(execId, taskId, project.id, now, providerRecord.id, task.model, logPath);
 
   log.info(`Executing task "${task.title}" via ${providerRecord.name}`);
 
@@ -94,7 +96,7 @@ async function executeTask(taskId) {
 
   // Execute the task
   const startTime = Date.now();
-  const result = await provider.execute(task, project, { model: task.model });
+  const result = await provider.execute(task, project, { model: task.model, logPath });
   const durationMin = Math.round((Date.now() - startTime) / 60000);
 
   if (!result.success) {
@@ -135,7 +137,9 @@ async function executeTask(taskId) {
   // Push and create PR for tier 2+ tasks, auto-merge for tier 1 or pre-approved
   let prUrl = null;
   let prNumber = null;
-  const autoMerge = task.tier === 1 || task.pre_approved;
+  // Check project-level auto-approve config
+  const approvedTiers = (project.auto_approve_tiers || '1').split(',').map(Number);
+  const autoMerge = approvedTiers.includes(task.tier) || task.pre_approved;
 
   if (commitHash && project.github_remote) {
     try {

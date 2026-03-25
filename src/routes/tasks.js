@@ -120,6 +120,24 @@ router.post('/:id/execute', async (req, res) => {
   }
 });
 
+// GET /api/tasks/:id/log — returns the live execution log
+router.get('/:id/log', (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Not found' });
+
+  // Find most recent execution for this task
+  const exec = db.prepare("SELECT * FROM executions WHERE task_id = ? ORDER BY started_at DESC LIMIT 1").get(req.params.id);
+  if (!exec?.log_path) return res.json({ log: '', streaming: false });
+
+  const fs = require('fs');
+  if (!fs.existsSync(exec.log_path)) return res.json({ log: '', streaming: false });
+
+  const log = fs.readFileSync(exec.log_path, 'utf-8');
+  const streaming = task.status === 'in_progress';
+  res.json({ log: log.slice(-8000), streaming, execId: exec.id }); // last 8KB
+});
+
 // GET /api/tasks/:id/diff — get the diff for a completed task's branch
 router.get('/:id/diff', (req, res) => {
   const db = getDb();

@@ -1,0 +1,191 @@
+import React, { useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useApi, api } from '../hooks/useApi';
+
+function AddProjectPanel({ onClose, onAdded }) {
+  const [pathInput, setPathInput] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState('');
+  const [picking, setPicking] = useState(false);
+
+  const handlePickFolder = async () => {
+    setPicking(true);
+    setAddError('');
+    try {
+      const result = await api('/projects/pick-folder', { method: 'POST' });
+      if (result.cancelled || !result.path) {
+        setPicking(false);
+        return;
+      }
+      // Got a path — add it directly
+      await api('/projects/from-path', { method: 'POST', body: { path: result.path } });
+      onAdded();
+      onClose();
+    } catch (e) {
+      setAddError(e.message);
+    } finally {
+      setPicking(false);
+    }
+  };
+
+  const handleAddPath = async () => {
+    if (!pathInput.trim()) return;
+    setAdding(true);
+    setAddError('');
+    try {
+      await api('/projects/from-path', { method: 'POST', body: { path: pathInput.trim() } });
+      setPathInput('');
+      onAdded();
+      onClose();
+    } catch (e) {
+      setAddError(e.message);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 mx-1 bg-bg border border-border rounded-lg p-3 space-y-3">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-text">Add project</span>
+        <button onClick={onClose} className="text-vmuted hover:text-muted text-xs leading-none">✕</button>
+      </div>
+
+      {/* Choose folder — opens native Finder dialog */}
+      <button
+        onClick={handlePickFolder}
+        disabled={picking}
+        className="w-full py-2.5 border border-dashed border-border rounded-md text-[11px] text-accent hover:border-accent hover:bg-accent/5 transition-colors disabled:opacity-50"
+      >
+        {picking ? 'Opening Finder...' : 'Choose folder...'}
+      </button>
+
+      {/* Paste path */}
+      <div>
+        <div className="flex items-center gap-1 mb-1.5">
+          <div className="h-px flex-1 bg-border" />
+          <span className="text-[10px] text-vmuted font-mono">or paste path</span>
+          <div className="h-px flex-1 bg-border" />
+        </div>
+        <div className="flex gap-1">
+          <input
+            type="text"
+            value={pathInput}
+            onChange={e => { setPathInput(e.target.value); setAddError(''); }}
+            onKeyDown={e => { if (e.key === 'Enter') handleAddPath(); }}
+            placeholder="/path/to/project"
+            className="flex-1 bg-card border border-border rounded-md px-2 py-1 text-[11px] text-text font-mono placeholder:text-vmuted focus:outline-none focus:border-accent"
+          />
+          <button
+            onClick={handleAddPath}
+            disabled={!pathInput.trim() || adding}
+            className="px-2 py-1 bg-accent text-white text-[11px] rounded-md hover:bg-accent/80 disabled:opacity-40 transition-colors"
+          >
+            {adding ? '...' : 'Add'}
+          </button>
+        </div>
+      </div>
+
+      {addError && <p className="text-[10px] text-error mt-1">{addError}</p>}
+    </div>
+  );
+}
+
+export default function Sidebar() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { data: dashData, refetch: refetchDash } = useApi('/timeline/dashboard', [], 8000);
+
+  const [showAddProject, setShowAddProject] = useState(false);
+
+  const projects = dashData?.projects || [];
+
+  const getProjectDot = (p) => {
+    if (p.activeTask) return 'bg-success animate-pulse';
+    if (p.needsReview > 0) return 'bg-warning';
+    return 'bg-vmuted';
+  };
+
+  const handleRemoveProject = async (id, name) => {
+    if (!confirm(`Remove "${name}" from DevShift? This deletes all its tasks.`)) return;
+    await api(`/projects/${id}`, { method: 'DELETE' });
+    if (location.pathname === `/project/${id}`) navigate('/');
+    refetchDash();
+  };
+
+  return (
+    <aside className="w-56 shrink-0 bg-card border-r border-border flex flex-col h-screen overflow-y-auto">
+      {/* Logo */}
+      <div className="flex items-center gap-2.5 px-4 py-4 border-b border-border">
+        <span
+          className="font-bold text-base cursor-pointer select-none"
+          onClick={() => navigate('/')}
+        >
+          <span className="text-accent font-mono">Dev</span>
+          <span className="text-text">Shift</span>
+        </span>
+      </div>
+
+      {/* Projects list */}
+      <div className="px-3 pt-4 pb-2 flex-1">
+        <p className="text-[10px] font-mono text-vmuted uppercase tracking-wider px-1 mb-1.5">Projects</p>
+        <div className="flex flex-col gap-0.5">
+          {projects.map(p => {
+            const isActive = location.pathname === `/project/${p.project.id}`;
+            return (
+              <div key={p.project.id} className={`group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors ${isActive ? 'bg-accent/10' : 'hover:bg-hover'}`}>
+                <div className="flex items-center gap-2 flex-1 min-w-0" onClick={() => navigate(`/project/${p.project.id}`)}>
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${getProjectDot(p)}`} />
+                  <span className={`text-sm truncate flex-1 ${isActive ? 'text-text font-medium' : 'text-muted group-hover:text-text'}`}>
+                    {p.project.name}
+                  </span>
+                  {p.needsReview > 0 && <span className="text-[10px] font-mono text-warning shrink-0">{p.needsReview}</span>}
+                </div>
+                <button onClick={e => { e.stopPropagation(); handleRemoveProject(p.project.id, p.project.name); }}
+                  title="Remove project"
+                  className="hidden group-hover:block text-vmuted hover:text-error text-xs transition-colors">
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Add project */}
+        {showAddProject ? (
+          <AddProjectPanel
+            onClose={() => setShowAddProject(false)}
+            onAdded={refetchDash}
+          />
+        ) : (
+          <button
+            onClick={() => setShowAddProject(true)}
+            className="flex items-center gap-2 px-2 py-1.5 mt-1 w-full text-sm text-vmuted hover:text-accent transition-colors rounded-md"
+          >
+            <span className="text-base leading-none">+</span>
+            <span className="text-xs">Add project</span>
+          </button>
+        )}
+      </div>
+
+      {/* Settings */}
+      <div className="px-3 pb-4 border-t border-border pt-3">
+        <button
+          onClick={() => navigate('/settings')}
+          className={`flex items-center gap-2.5 px-2 py-1.5 rounded-md w-full transition-colors ${
+            location.pathname === '/settings'
+              ? 'text-accent bg-accent/10'
+              : 'text-vmuted hover:text-muted hover:bg-hover'
+          }`}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-4 h-4 shrink-0">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          <span className="text-xs">Settings</span>
+        </button>
+      </div>
+    </aside>
+  );
+}

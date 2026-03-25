@@ -14,6 +14,9 @@ function isOffHours() {
   const db = getDb();
   const schedule = db.prepare('SELECT * FROM schedule WHERE id = 1').get();
 
+  // Always-on mode: agent runs whenever there are tasks
+  if (schedule.always_on) return true;
+
   // If user explicitly said "I'm done for today" or vacation mode
   if (schedule.off_today || schedule.vacation_mode) return true;
 
@@ -38,8 +41,13 @@ function isOffHours() {
     localDay = now.getDay();
   }
 
-  // Check active days
-  const activeDays = (schedule.active_days || '1,2,3,4,5').split(',').map(Number);
+  // Check active days — new JSON format ({day, slot} array) is informational only
+  const activeDaysRaw = schedule.active_days || '1,2,3,4,5';
+  if (activeDaysRaw.trim().startsWith('[')) {
+    // JSON grid format: always_on flag controls scheduling; default to working
+    return true;
+  }
+  const activeDays = activeDaysRaw.split(',').map(Number);
   if (!activeDays.includes(localDay)) return true;
 
   // Check active hours
@@ -59,15 +67,60 @@ function isOffHours() {
 function pickNextTask() {
   const db = getDb();
   return db.prepare(`
-    SELECT * FROM tasks
-    WHERE status IN ('backlog', 'queued') AND task_type = 'agent'
+    SELECT t.* FROM tasks t
+    JOIN projects p ON t.project_id = p.id
+    WHERE t.status IN ('backlog', 'queued') AND t.task_type = 'agent'
+      AND p.paused = 0
+      AND (
+        (SELECT COUNT(*) FROM projects WHERE focus_mode = 1) = 0
+        OR p.focus_mode = 1
+      )
     ORDER BY
-      CASE WHEN deadline IS NOT NULL THEN 0 ELSE 1 END,
-      priority ASC,
-      CASE tier WHEN 1 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 ELSE 3 END,
-      created_at ASC
+      p.priority ASC,
+      CASE WHEN t.deadline IS NOT NULL THEN 0 ELSE 1 END,
+      t.priority ASC,
+      CASE t.tier WHEN 1 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 ELSE 3 END,
+      t.created_at ASC
     LIMIT 1
   `).get();
+}
+
+/**
+ * Run Smart Mode analysis across all unpaused projects.
+ * Skips projects analyzed in the last 6 hours and respects focus mode.
+ * Analyzes one project per call to keep ticks short.
+ */
+async function runSmartModeForAllProjects() {
+  const db = getDb();
+  const projects = db.prepare("SELECT * FROM projects WHERE paused = 0").all();
+
+  for (const project of projects) {
+    // Skip if this project was analyzed recently (last 6 hours)
+    const recentAnalysis = db.prepare(`
+      SELECT COUNT(*) as c FROM tasks
+      WHERE project_id = ? AND title LIKE 'Smart Mode:%' AND created_at > datetime('now', '-6 hours')
+    `).get(project.id);
+
+    if (recentAnalysis.c > 0) continue;
+
+    // Skip projects with focus_mode off when another project has focus
+    const focusedProject = db.prepare("SELECT id FROM projects WHERE focus_mode = 1").get();
+    if (focusedProject && focusedProject.id !== project.id) continue;
+
+    log.info(`[SmartMode] Analyzing project "${project.name}"...`);
+    try {
+      const smartMode = require('./smart-mode');
+      const result = await smartMode.analyzeProject(project.id);
+      if (result?.success) {
+        log.info(`[SmartMode] Created ${result.tasksCreated} tasks for "${project.name}"`);
+      }
+    } catch (e) {
+      log.warn(`[SmartMode] Failed for "${project.name}": ${e.message}`);
+    }
+
+    // Only analyze one project per tick
+    break;
+  }
 }
 
 /**
@@ -75,11 +128,20 @@ function pickNextTask() {
  *
  * Two modes:
  * - Work Mode: when there are backlog tasks → improve prompts, decompose, execute
+ *   Processes up to 3 tasks per tick so the agent doesn't sit idle between tasks.
  * - Smart Mode: when backlog is empty + credits available → proactive improvements
+ *   Cycles through ALL projects (not just one random one).
  */
 async function tick() {
   if (schedulerRunning) {
     log.debug('Scheduler tick skipped — already running');
+    return;
+  }
+
+  // Don't run anything until setup is complete
+  const setupCheck = getDb().prepare('SELECT setup_complete FROM schedule WHERE id = 1').get();
+  if (!setupCheck?.setup_complete) {
+    log.debug('Scheduler tick — setup not complete, skipping');
     return;
   }
 
@@ -99,60 +161,44 @@ async function tick() {
   schedulerRunning = true;
 
   try {
-    // --- WORK MODE: process backlog tasks ---
-    const task = pickNextTask();
+    // --- WORK MODE: process all available backlog tasks in a row ---
+    let task = pickNextTask();
+    let tasksExecutedThisTick = 0;
 
-    if (task) {
-      // Check if this task needs prompt improvement first
+    while (task && tasksExecutedThisTick < 3) { // max 3 per tick to not hog
       const workMode = require('./work-mode');
       if (workMode.needsImprovement(task.title)) {
-        log.info(`[WorkMode] Improving vague task: "${task.title}"`);
         try {
           const result = await workMode.improvePrompt(task.id);
           if (result.improved && result.subtaskCount > 0) {
-            // Task was decomposed — subtasks are now in backlog, will be picked up next tick
-            log.info(`[WorkMode] Decomposed into ${result.subtaskCount} subtasks`);
-            return;
+            task = pickNextTask(); // pick the first subtask
+            continue;
           }
-          // If improved but not decomposed, the task title/description is now better
-          // Re-fetch it and continue to execution
         } catch (e) {
-          log.warn(`[WorkMode] Improvement failed, executing as-is: ${e.message}`);
+          log.warn(`[WorkMode] Improvement failed: ${e.message}`);
         }
       }
 
-      // Check credit budget
-      if (!canAffordTask(task)) {
-        log.info('Scheduler: insufficient credits for next task');
-        return;
-      }
+      if (!canAffordTask(task)) break;
 
-      // Re-fetch task (may have been improved)
-      const freshTask = getDb().prepare('SELECT * FROM tasks WHERE id = ? AND status IN (\'backlog\', \'queued\')').get(task.id);
+      const freshTask = getDb().prepare("SELECT * FROM tasks WHERE id = ? AND status IN ('backlog', 'queued')").get(task.id);
       if (freshTask) {
         log.info(`Scheduler [WorkMode]: executing "${freshTask.title}"`);
         await executeTask(freshTask.id);
+        tasksExecutedThisTick++;
       }
-      return;
+
+      // Check if we should continue
+      if (getTasksExecutedThisWindow() >= maxTasks) break;
+      task = pickNextTask();
     }
 
-    // --- SMART MODE: no backlog tasks, use remaining credits proactively ---
-    const credits = getCreditUsage();
-    if (credits.availablePercent > 10) {
-      // There are credits to burn and no user tasks — be proactive
-      log.info('[SmartMode] No backlog tasks, running proactive analysis...');
-      try {
-        const smartMode = require('./smart-mode');
-        const result = await smartMode.run();
-        if (result && result.success) {
-          log.info(`[SmartMode] Created ${result.tasksCreated} improvement tasks (${result.analysis})`);
-          // Next tick will pick up the generated tasks in Work Mode
-        }
-      } catch (e) {
-        log.warn(`[SmartMode] Failed: ${e.message}`);
+    // --- SMART MODE: if no backlog tasks and credits available, be proactive ---
+    if (!task) {
+      const credits = getCreditUsage();
+      if (credits.availablePercent > 10) {
+        await runSmartModeForAllProjects();
       }
-    } else {
-      log.debug('Scheduler: no tasks and credits low — idle');
     }
   } catch (e) {
     log.error(`Scheduler error: ${e.message}`);
@@ -188,4 +234,4 @@ function stop() {
   }
 }
 
-module.exports = { start, stop, isOffHours, tick, pickNextTask };
+module.exports = { start, stop, isOffHours, tick, pickNextTask, runSmartModeForAllProjects };

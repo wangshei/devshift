@@ -1,99 +1,128 @@
 # DevShift
 
-> A shared to-do list between you and your AI coding tools — it knows who should do what, and when.
+**Your AI coding tools work while you sleep.**
 
-Queue tasks from your phone or Telegram. Your AI coding tools work while you sleep. Wake up to progress.
+You already pay for AI coding subscriptions — Claude Code, Cursor, Antigravity. But you only use them 8 hours a day. DevShift runs those same tools on your projects during off-hours, burning through your task backlog overnight.
 
-## Quick Start
+Wake up to completed PRs, fixed bugs, and new features — all using credits you were already paying for.
 
-```bash
-git clone https://github.com/YOUR_USERNAME/devshift.git
-cd devshift
-npm install
-cd dashboard && npm install && npx vite build && cd ..
-npm run setup    # interactive setup wizard
-npm start        # starts on http://localhost:3847
-```
+## How it works
 
-## What It Does
+1. **Add your projects** — point DevShift at your local codebases
+2. **Add tasks** — describe what you need in plain English ("fix the login bug", "add input validation", "write tests for the auth module")
+3. **Turn on auto-pilot** — DevShift picks tasks from your backlog, runs them through your AI tools, and commits the results
+4. **Review the output** — approve PRs, merge changes, or reject and retry
 
-DevShift is a **collaboration layer between you and your AI coding tools**. You dump tasks into it — from your phone, Telegram, your laptop — and it figures out:
-
-- **Which tasks an AI agent can handle autonomously** (tests, docs, lint fixes, boilerplate)
-- **Which tasks need you** (design decisions, credentials, code review)
-- **When to run agent work** (during your off-hours, respecting rate limits and credits)
-
-When you come back, you see a clean summary of what changed.
-
-## Supported Providers
-
-| Provider | CLI | Best For |
-|----------|-----|----------|
-| **Claude Code** | `claude` | Complex features, research, Opus-level work |
-| **Google Antigravity** | `agy` | Simple tasks, free credits |
-| **Cursor** | `cursor` | General coding tasks |
-
-DevShift auto-detects which tools you have installed and routes tasks intelligently.
+The agent automatically rotates across all your projects, picking the highest-priority work first. When the backlog is empty, it proactively analyzes your code for improvements.
 
 ## Features
 
-- **Timeline dashboard** — see what's done, what's running, what needs you
-- **Auto-classification** — tasks are classified as agent/human work with tier assignment
-- **Smart scheduling** — agent works during your off-hours, respects credit limits
-- **Multi-provider** — use one AI tool or many, with automatic fallback
-- **Telegram bot** — add tasks, check status, approve PRs from your phone
-- **Credit tracking** — monitors usage, reserves credits for your active coding
-- **PWA** — installable on your phone's home screen
-- **Git integration** — branch per task, atomic commits, PR creation
+- **Multi-project** — manage multiple codebases from one dashboard
+- **Multi-provider** — uses Claude Code, Cursor, and Google Antigravity (whatever you have installed)
+- **Smart scheduling** — only runs during your off-hours so it never conflicts with your coding
+- **Auto-pilot mode** — set it and forget it, the agent works whenever there are tasks
+- **Code review** — creates branches and PRs for non-trivial changes so you stay in control
+- **Task classification** — automatically categorizes tasks by complexity (auto-merge simple fixes, review features)
+- **Credit-aware** — tracks usage so it doesn't blow through your subscription limits
+- **Light & dark mode** — toggle in the bottom-right corner
+- **Fully local** — everything runs on your machine, no external services or accounts needed
 
-## Dashboard
+## Quick start
 
-Dark theme, data-dense, Mission Control aesthetic. Access from any device at `localhost:3847`.
+```bash
+# Clone the repo
+git clone https://github.com/user/devshift.git
+cd devshift
 
-The main screen is a **timeline** — not a Kanban board — showing:
-- Human tasks that need your attention (top)
-- Agent activity (completed, in-progress, planned)
-- Credit usage gauge
-- "I'm done for today" / "I'm off until" quick actions
+# Install dependencies
+npm install
 
-## Telegram Bot
+# Build the dashboard
+npm run build
 
-The fastest way to interact:
-
-```
-You: ProductA: add dark mode to settings
-Bot: ✓ Added to ProductA backlog (Tier 2 — needs review)
-
-You: status
-Bot: 🟢 Agent running — working on "Add tests for auth"
-     3 tasks completed today, 2 need your review
-
-You: done for today
-Bot: ✓ Agent unlocked — will work through 5 backlog tasks tonight.
+# Start the server
+npm start
 ```
 
-Setup: Create a bot via @BotFather, paste the token during `npm run setup`.
+Then open [http://localhost:3847](http://localhost:3847) in your browser. The setup wizard will walk you through connecting your AI tools and adding projects.
+
+### Requirements
+
+- **Node.js 20+**
+- At least one AI coding tool installed:
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` CLI)
+  - [Google Antigravity](https://idx.google.com/) (`agy` CLI)
+  - [Cursor](https://cursor.sh/) (`cursor` CLI)
+- macOS (Linux support planned)
 
 ## Architecture
 
-- **Backend**: Node.js, Express, SQLite (better-sqlite3), node-cron
-- **Frontend**: React (Vite), Tailwind CSS, PWA
-- **Execution**: Provider plugin system with standard interface
-- **No external services** — everything runs locally
+```
+devshift/
+├── src/
+│   ├── server.js          # Express app (port 3847)
+│   ├── db.js              # SQLite database + migrations
+│   ├── routes/            # API endpoints
+│   ├── services/
+│   │   ├── scheduler.js   # Cron job — picks and runs tasks every minute
+│   │   ├── executor.js    # Runs tasks via AI providers, manages git branches
+│   │   ├── planner.js     # Credit tracking and task limits
+│   │   └── smart-mode.js  # Proactive code improvements when backlog is empty
+│   └── providers/         # AI tool integrations (Claude, Antigravity, Cursor)
+├── dashboard/             # React frontend (Vite + Tailwind v4)
+│   └── src/
+│       ├── pages/         # Dashboard, ProjectFeed, Settings, Setup
+│       └── components/    # Sidebar, TaskInput, ThemeToggle, etc.
+└── data/                  # SQLite database + execution logs (gitignored)
+```
 
-## How It Works
+### How the scheduler works
 
-1. You add a task (dashboard, Telegram, or API)
-2. DevShift classifies it: agent work vs human work, tier 1/2/3
-3. During your off-hours, the scheduler picks tasks by priority
-4. The execution engine: creates a branch → picks a provider → executes → commits → creates PR
-5. Tier 1 tasks auto-merge; Tier 2 tasks surface for your review
-6. You see a clean summary of everything that happened
+Every minute, the scheduler:
+
+1. Checks if it's off-hours (or auto-pilot is on)
+2. Picks the highest-priority task across all projects
+3. Creates a git branch, runs the AI tool, commits changes
+4. For simple tasks: auto-merges. For complex tasks: creates a PR for review
+5. Moves to the next task (up to 3 per tick, configurable daily limit)
+
+When the backlog is empty, it switches to **Smart Mode** — analyzing your projects for potential improvements (test coverage, code quality, security, documentation) and creating tasks automatically.
+
+## Configuration
+
+### Schedule
+
+Set your coding hours in the dashboard Settings page. The agent runs outside these hours. Or enable **auto-pilot** from the home screen to let it run whenever tasks are available.
+
+### Task limits
+
+By default, the agent runs up to 6 tasks per day. Adjust in Settings under "Max tasks per window."
+
+### Credit reserve
+
+Reserve a percentage of your AI credits for your own coding. The agent won't exceed the remaining budget. Default: 30% reserved for you.
+
+## API
+
+The server exposes a REST API at `http://localhost:3847/api`. Key endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/projects` | List all projects |
+| `POST /api/projects/from-path` | Add a project from a directory path |
+| `POST /api/tasks` | Create a new task |
+| `GET /api/timeline/dashboard` | Dashboard data (all projects + status) |
+| `GET /api/schedule` | Current schedule configuration |
+| `PATCH /api/schedule` | Update schedule (always_on, hours, etc.) |
+| `GET /api/agent/status` | Agent status (running, paused, current task) |
+
+## Stack
+
+- **Backend**: Node.js, Express, better-sqlite3, node-cron
+- **Frontend**: React (Vite), Tailwind CSS v4, PWA-ready
+- **Database**: SQLite (zero config, all data local)
+- **No TypeScript** — plain JS with JSDoc
 
 ## License
 
 MIT
-
----
-
-*Built for builders who have more ideas than hours.*

@@ -1,5 +1,14 @@
 import React from 'react';
 
+function formatTime(ts) {
+  if (!ts) return '~';
+  try {
+    const d = new Date(ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z');
+    if (isNaN(d.getTime())) return '~';
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch { return '~'; }
+}
+
 const STATUS_ICONS = {
   done: { icon: '\u2713', color: 'text-success' },
   in_progress: { icon: '\u25CF', color: 'text-accent animate-pulse' },
@@ -14,7 +23,7 @@ const TIER_LABELS = { 1: 'Auto', 2: 'Review', 3: 'Research' };
 export default function TimelineEntry({ task }) {
   const s = STATUS_ICONS[task.status] || STATUS_ICONS.backlog;
   const time = task.completed_at || task.started_at;
-  const timeStr = time ? new Date(time + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '~';
+  const timeStr = formatTime(time);
 
   return (
     <div className="flex items-start gap-3 py-2 px-1 group">

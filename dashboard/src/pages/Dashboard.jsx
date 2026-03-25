@@ -1,138 +1,144 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useApi, api } from '../hooks/useApi';
-import AgentStatusBar from '../components/AgentStatusBar';
-import CreditGauge from '../components/CreditGauge';
-import ProjectStatusCard from '../components/ProjectStatusCard';
 import TaskInput from '../components/TaskInput';
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { data, refetch } = useApi('/timeline/dashboard', [], 5000);
-  const [showAddProject, setShowAddProject] = useState(false);
-  const [pathInput, setPathInput] = useState('');
-  const [adding, setAdding] = useState(false);
-  const [addError, setAddError] = useState('');
+  const { data: schedule, refetch: refetchSchedule } = useApi('/schedule', [], 5000);
+  const { data: agentStatus } = useApi('/agent/status', [], 4000);
+
+  const isAlwaysOn = !!schedule?.always_on;
+  const isOffToday = !!schedule?.off_today;
+  const isVacation = !!schedule?.vacation_mode;
+  const agentCanWork = isAlwaysOn || isOffToday || isVacation;
+
+  const projects = data?.projects || [];
+  const hasProjects = projects.length > 0;
+  const isRunning = agentStatus?.running && !agentStatus?.paused;
+  const backlogCount = agentStatus?.backlogTasks || 0;
+
+  const toggleAlwaysOn = async () => {
+    await api('/schedule', { method: 'PATCH', body: { always_on: isAlwaysOn ? 0 : 1 } });
+    refetchSchedule();
+  };
 
   const handleOffToday = async () => {
     await api('/schedule/off-today', { method: 'POST' });
+    refetchSchedule();
     refetch();
   };
-
-  const handleImBack = async () => {
-    await api('/schedule/im-back', { method: 'POST' });
-    refetch();
-  };
-
-  const handleAddProject = async () => {
-    if (!pathInput.trim()) return;
-    setAdding(true);
-    setAddError('');
-    try {
-      await api('/projects/from-path', { method: 'POST', body: { path: pathInput.trim() } });
-      setPathInput('');
-      setShowAddProject(false);
-      refetch();
-    } catch (e) {
-      setAddError(e.message);
-    } finally {
-      setAdding(false);
-    }
-  };
-
-  const isVacation = data?.schedule?.vacation_mode;
-  const isOffToday = data?.schedule?.off_today;
-  const totalReviews = data?.projects?.reduce((sum, p) => sum + p.needsReview, 0) || 0;
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6 pb-24 md:pb-6">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-lg font-semibold tracking-tight">
-          <span className="text-accent font-mono font-bold">Dev</span>Shift
-        </h1>
-        <CreditGauge />
-      </div>
-
-      {/* Agent status */}
-      <div className="mb-4">
-        <AgentStatusBar />
-      </div>
-
-      {/* Main action */}
-      <div className="mb-6">
-        {isVacation ? (
-          <button onClick={handleImBack}
-            className="w-full py-3 text-sm bg-success/10 text-success border border-success/20 rounded-lg hover:bg-success/20 transition-colors font-medium">
-            I'm back — pause the agent
-          </button>
-        ) : isOffToday ? (
-          <div className="w-full py-3 text-sm bg-accent/5 border border-accent/10 rounded-lg text-center text-muted">
-            Agent is working your off-hours tasks
-          </div>
-        ) : (
-          <button onClick={handleOffToday}
-            className="w-full py-3 text-sm bg-accent text-white rounded-lg hover:bg-accent/80 transition-colors font-medium">
-            I'm done for today — let the agent work
-          </button>
-        )}
-      </div>
-
-      {/* Reviews banner */}
-      {totalReviews > 0 && (
-        <div className="flex items-center gap-2 px-4 py-2.5 bg-warning/10 border border-warning/20 rounded-lg mb-4">
-          <div className="w-2 h-2 rounded-full bg-warning" />
-          <span className="text-sm text-warning font-medium">
-            {totalReviews} task{totalReviews > 1 ? 's' : ''} need{totalReviews === 1 ? 's' : ''} your review
-          </span>
+    <div className="max-w-2xl mx-auto px-6 py-6 space-y-6">
+      {/* Welcome state when no projects */}
+      {!hasProjects && (
+        <div className="text-center py-16">
+          <h2 className="text-xl font-bold mb-2">Welcome to DevShift</h2>
+          <p className="text-muted text-sm mb-1 max-w-sm mx-auto">
+            Add a project from the sidebar to get started.
+          </p>
+          <p className="text-vmuted text-xs max-w-sm mx-auto">
+            The agent will work through your tasks while you're away.
+          </p>
         </div>
       )}
 
-      {/* Project cards */}
-      <div className="space-y-3 mb-6">
-        <h2 className="text-xs font-mono text-muted uppercase tracking-wider">
-          Your projects ({data?.projects?.length || 0})
-        </h2>
-        {data?.projects?.map(p => (
-          <ProjectStatusCard key={p.project.id} data={p} />
-        ))}
-
-        {/* Add project */}
-        {showAddProject ? (
-          <div className="p-4 bg-card border border-border rounded-lg">
-            <div className="flex gap-2 mb-2">
-              <input
-                type="text"
-                value={pathInput}
-                onChange={e => { setPathInput(e.target.value); setAddError(''); }}
-                onKeyDown={e => e.key === 'Enter' && handleAddProject()}
-                placeholder="/Users/you/code/my-project"
-                className="flex-1 bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text font-mono placeholder:text-vmuted focus:outline-none focus:border-accent"
-                autoFocus
-              />
-              <button onClick={handleAddProject} disabled={!pathInput.trim() || adding}
-                className="px-4 py-2 bg-accent text-white text-sm rounded-lg hover:bg-accent/80 disabled:opacity-40 transition-colors">
-                {adding ? '...' : 'Add'}
+      {hasProjects && (
+        <>
+          {/* Auto-pilot control — the main thing */}
+          <div className={`rounded-lg border p-4 ${agentCanWork ? 'bg-success/5 border-success/20' : 'bg-card border-border'}`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`w-2.5 h-2.5 rounded-full ${isRunning ? 'bg-success animate-pulse' : agentCanWork ? 'bg-success' : 'bg-vmuted'}`} />
+                <div>
+                  <p className="text-sm font-medium text-text">
+                    {isRunning ? 'Agent is working' : agentCanWork ? 'Agent ready' : 'Agent paused'}
+                  </p>
+                  <p className="text-[11px] text-muted">
+                    {isRunning && agentStatus?.currentTask
+                      ? agentStatus.currentTask.title
+                      : agentCanWork
+                        ? `${backlogCount} task${backlogCount !== 1 ? 's' : ''} in queue`
+                        : 'Turn on auto-pilot to use your unused credits'
+                    }
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={toggleAlwaysOn}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  isAlwaysOn ? 'bg-success' : 'bg-border'
+                }`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  isAlwaysOn ? 'translate-x-6' : 'translate-x-1'
+                }`} />
               </button>
             </div>
-            {addError && <p className="text-xs text-error">{addError}</p>}
-            <button onClick={() => setShowAddProject(false)} className="text-xs text-muted hover:text-text mt-1">Cancel</button>
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-[10px] text-vmuted">Auto-pilot</span>
+              {!isAlwaysOn && !agentCanWork && (
+                <button
+                  onClick={handleOffToday}
+                  className="text-[11px] text-accent hover:underline ml-auto"
+                >
+                  or just run for today
+                </button>
+              )}
+              {isAlwaysOn && (
+                <span className="text-[10px] text-success ml-auto">Uses credits when you're not coding</span>
+              )}
+            </div>
           </div>
-        ) : (
-          <button
-            onClick={() => setShowAddProject(true)}
-            className="w-full p-4 border border-dashed border-border rounded-lg text-sm text-muted hover:text-accent hover:border-accent/30 transition-colors text-center"
-          >
-            + Add a project
-          </button>
-        )}
-      </div>
 
-      {/* Task input */}
-      {data?.projects?.length > 0 && (
-        <div className="fixed bottom-16 md:bottom-0 left-0 right-0 md:relative md:mt-4 bg-bg p-4 md:p-0 border-t md:border-0 border-border">
-          <div className="max-w-2xl mx-auto">
+          {/* Projects */}
+          <div>
+            <h2 className="text-xs font-mono text-vmuted uppercase tracking-wider mb-2">Your projects</h2>
+            <div className="space-y-1.5">
+              {projects.map(p => (
+                <button
+                  key={p.project.id}
+                  onClick={() => navigate(`/project/${p.project.id}`)}
+                  className={`w-full flex items-center gap-3 px-4 py-3 bg-card border rounded-lg hover:border-accent/30 hover:bg-hover transition-all text-left ${
+                    p.needsReview > 0 ? 'border-warning/30' : 'border-border'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${
+                    p.activeTask ? 'bg-success animate-pulse' :
+                    p.needsReview > 0 ? 'bg-warning' :
+                    'bg-vmuted'
+                  }`} />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm font-medium text-text truncate block">{p.project.name}</span>
+                    {p.activeTask && (
+                      <span className="text-[11px] text-muted truncate block">Working: {p.activeTask.title}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    {p.completedToday > 0 && (
+                      <span className="text-[11px] font-mono text-success">{p.completedToday} done</span>
+                    )}
+                    {p.needsReview > 0 && (
+                      <span className="text-[11px] font-mono text-warning">{p.needsReview} to review</span>
+                    )}
+                    {p.backlog > 0 && (
+                      <span className="text-[11px] font-mono text-vmuted">{p.backlog} queued</span>
+                    )}
+                    <span className="text-vmuted text-xs">→</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Quick add task */}
+          <div>
+            <h2 className="text-xs font-mono text-vmuted uppercase tracking-wider mb-2">Add a task</h2>
             <TaskInput onTaskAdded={refetch} />
           </div>
-        </div>
+        </>
       )}
     </div>
   );

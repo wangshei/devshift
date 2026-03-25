@@ -28,7 +28,7 @@ router.get('/status', (req, res) => {
   const detected = detectProviders();
 
   res.json({
-    needsSetup: !schedule.setup_complete || projectCount === 0,
+    needsSetup: !schedule.setup_complete,
     hasProjects: projectCount > 0,
     hasProviders: providerCount > 0,
     projectCount,
@@ -138,61 +138,109 @@ router.post('/projects/scan', (req, res) => {
   res.json(info);
 });
 
-// GET /api/setup/scan-local — find git repos in common locations
+// GET /api/setup/scan-local — find git repos via mdfind + common locations + IDE recents
 router.get('/scan-local', (req, res) => {
   const os = require('os');
   const home = os.homedir();
+  const db = getDb();
+  const seen = new Set();
+  const found = [];
 
+  function addRepo(dir) {
+    if (seen.has(dir) || found.length > 50) return;
+    seen.add(dir);
+    // Must be a git repo
+    if (!fs.existsSync(path.join(dir, '.git'))) return;
+    // Skip if already added as a project
+    if (db.prepare('SELECT id FROM projects WHERE repo_path = ?').get(dir)) return;
+
+    const info = { path: dir, name: path.basename(dir) };
+    const pkgPath = path.join(dir, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        if (pkg.name) info.name = pkg.name;
+        const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+        const stack = [];
+        if (deps.react) stack.push('React');
+        if (deps.next) stack.push('Next.js');
+        if (deps.vue) stack.push('Vue');
+        if (deps.express) stack.push('Express');
+        if (deps.typescript) stack.push('TypeScript');
+        if (stack.length) info.stack = stack;
+      } catch { /* ignore */ }
+    }
+    if (fs.existsSync(path.join(dir, 'Cargo.toml'))) info.stack = info.stack || ['Rust'];
+    if (fs.existsSync(path.join(dir, 'go.mod'))) info.stack = info.stack || ['Go'];
+    if (fs.existsSync(path.join(dir, 'requirements.txt')) ||
+        fs.existsSync(path.join(dir, 'pyproject.toml'))) info.stack = info.stack || ['Python'];
+    found.push(info);
+  }
+
+  // 1. Use mdfind to find recently modified git repos (last 30 days)
+  try {
+    const mdfindResult = execSync(
+      `mdfind 'kMDItemContentType == "public.directory" && kMDItemFSName == ".git" && kMDItemContentModificationDate > $time.now(-2592000)' 2>/dev/null | head -60`,
+      { encoding: 'utf-8', timeout: 10000 }
+    ).trim();
+    if (mdfindResult) {
+      for (const gitDir of mdfindResult.split('\n')) {
+        const repoDir = path.dirname(gitDir.trim());
+        // Skip system/hidden dirs
+        if (repoDir.includes('/Library/') || repoDir.includes('/.')) continue;
+        addRepo(repoDir);
+      }
+    }
+  } catch { /* mdfind not available or timed out */ }
+
+  // 2. Check VS Code / Cursor recent workspaces
+  const ideStoragePaths = [
+    path.join(home, 'Library/Application Support/Code/User/globalStorage/storage.json'),
+    path.join(home, 'Library/Application Support/Cursor/User/globalStorage/storage.json'),
+  ];
+  for (const storagePath of ideStoragePaths) {
+    try {
+      if (!fs.existsSync(storagePath)) continue;
+      const storage = JSON.parse(fs.readFileSync(storagePath, 'utf-8'));
+      const recents = storage.openedPathsList?.workspaces3 ||
+                      storage.openedPathsList?.entries ||
+                      storage.lastKnownMenubarData?.menus?.['File']?.items?.find?.(i => i.id === 'submenuitem.MenubarRecentMenu')?.submenu?.items || [];
+      for (const entry of recents) {
+        let uri = typeof entry === 'string' ? entry : entry?.folderUri || entry?.workspace?.configPath || '';
+        if (uri.startsWith('file://')) uri = decodeURIComponent(uri.replace('file://', ''));
+        if (uri && fs.existsSync(uri)) addRepo(uri);
+      }
+    } catch { /* ignore parsing errors */ }
+  }
+
+  // 3. Fall back to scanning common directories (depth 2)
   const searchDirs = [
     path.join(home, 'Desktop'),
     path.join(home, 'Documents'),
     path.join(home, 'code'),
+    path.join(home, 'Code'),
     path.join(home, 'projects'),
+    path.join(home, 'Projects'),
     path.join(home, 'dev'),
+    path.join(home, 'Developer'),
     path.join(home, 'workspace'),
     path.join(home, 'repos'),
     path.join(home, 'src'),
+    path.join(home, 'GitHub'),
+    path.join(home, 'Sites'),
+    path.join(home, 'Work'),
   ].filter(d => fs.existsSync(d));
-
-  const found = [];
-  const db = getDb();
 
   function scanDir(dir, depth) {
     if (depth > 2 || found.length > 50) return;
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
 
-    // If this dir itself is a git repo, add it
     if (fs.existsSync(path.join(dir, '.git'))) {
-      const existing = db.prepare('SELECT id FROM projects WHERE repo_path = ?').get(dir);
-      if (!existing) {
-        const info = { path: dir, name: path.basename(dir) };
-        // Try package.json for stack
-        const pkgPath = path.join(dir, 'package.json');
-        if (fs.existsSync(pkgPath)) {
-          try {
-            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-            if (pkg.name) info.name = pkg.name;
-            const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-            const stack = [];
-            if (deps.react) stack.push('React');
-            if (deps.next) stack.push('Next.js');
-            if (deps.vue) stack.push('Vue');
-            if (deps.express) stack.push('Express');
-            if (deps.typescript) stack.push('TypeScript');
-            if (stack.length) info.stack = stack;
-          } catch { /* ignore */ }
-        }
-        if (fs.existsSync(path.join(dir, 'Cargo.toml'))) info.stack = ['Rust'];
-        if (fs.existsSync(path.join(dir, 'go.mod'))) info.stack = ['Go'];
-        if (fs.existsSync(path.join(dir, 'requirements.txt')) ||
-            fs.existsSync(path.join(dir, 'pyproject.toml'))) info.stack = ['Python'];
-        found.push(info);
-      }
-      return; // Don't recurse into git repos
+      addRepo(dir);
+      return;
     }
 
-    // Otherwise recurse into subdirectories
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
@@ -204,6 +252,15 @@ router.get('/scan-local', (req, res) => {
   for (const dir of searchDirs) {
     scanDir(dir, 0);
   }
+
+  // Sort: recently modified first
+  found.sort((a, b) => {
+    try {
+      const aStat = fs.statSync(path.join(a.path, '.git'));
+      const bStat = fs.statSync(path.join(b.path, '.git'));
+      return bStat.mtimeMs - aStat.mtimeMs;
+    } catch { return 0; }
+  });
 
   res.json({ repos: found, searched: searchDirs });
 });

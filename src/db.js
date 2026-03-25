@@ -31,6 +31,9 @@ function migrate() {
       preferences TEXT,
       status_summary TEXT,
       priority INTEGER DEFAULT 5,
+      paused INTEGER DEFAULT 0,
+      focus_mode INTEGER DEFAULT 0,
+      auto_approve_tiers TEXT DEFAULT '1',
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
@@ -89,7 +92,9 @@ function migrate() {
       reserve_percent INTEGER DEFAULT 40,
       telegram_bot_token TEXT,
       telegram_chat_id TEXT,
-      setup_complete INTEGER DEFAULT 0
+      setup_complete INTEGER DEFAULT 0,
+      always_on INTEGER DEFAULT 0,
+      last_checkin TEXT
     );
 
     CREATE TABLE IF NOT EXISTS executions (
@@ -122,10 +127,36 @@ function migrate() {
     database.prepare('INSERT INTO schedule (id) VALUES (1)').run();
   }
 
+  // Migration: add log_path column to executions if missing
+  const execCols = database.prepare("PRAGMA table_info(executions)").all();
+  if (!execCols.find(c => c.name === 'log_path')) {
+    database.exec('ALTER TABLE executions ADD COLUMN log_path TEXT');
+  }
+
+  // Migration: add paused and focus_mode columns to projects if missing
+  const projectCols = database.prepare("PRAGMA table_info(projects)").all();
+  if (!projectCols.find(c => c.name === 'paused')) {
+    database.exec('ALTER TABLE projects ADD COLUMN paused INTEGER DEFAULT 0');
+  }
+  if (!projectCols.find(c => c.name === 'focus_mode')) {
+    database.exec('ALTER TABLE projects ADD COLUMN focus_mode INTEGER DEFAULT 0');
+  }
+
   // Migration: add setup_complete column if missing (existing DBs)
   const cols = database.prepare("PRAGMA table_info(schedule)").all();
   if (!cols.find(c => c.name === 'setup_complete')) {
     database.exec('ALTER TABLE schedule ADD COLUMN setup_complete INTEGER DEFAULT 0');
+  }
+  if (!cols.find(c => c.name === 'always_on')) {
+    database.exec('ALTER TABLE schedule ADD COLUMN always_on INTEGER DEFAULT 0');
+  }
+  if (!cols.find(c => c.name === 'last_checkin')) {
+    database.exec("ALTER TABLE schedule ADD COLUMN last_checkin TEXT");
+  }
+
+  // Migration: add auto_approve_tiers column to projects if missing
+  if (!projectCols.find(c => c.name === 'auto_approve_tiers')) {
+    database.exec("ALTER TABLE projects ADD COLUMN auto_approve_tiers TEXT DEFAULT '1'");
   }
 
   log.info('Database migration complete');

@@ -30,7 +30,23 @@ app.use('/api/setup', require('./routes/setup'));
 
 // Credit usage endpoint
 app.get('/api/credits', (req, res) => {
-  res.json(getCreditUsage());
+  const { getDb } = require('./db');
+  const db = getDb();
+  const agentTasksDone = db.prepare("SELECT COUNT(*) as count FROM tasks WHERE status = 'done' AND task_type = 'agent'").get().count;
+  const humanTasksDone = db.prepare("SELECT COUNT(*) as count FROM tasks WHERE status = 'done' AND task_type != 'agent'").get().count;
+  const providers = db.prepare("SELECT * FROM providers WHERE enabled = 1").all();
+  const providerBreakdown = providers.map(prov => {
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const execs = db.prepare("SELECT COUNT(*) as count FROM executions WHERE provider = ? AND started_at > ? AND status = 'completed'").get(prov.id, weekAgo);
+    return {
+      id: prov.id,
+      name: prov.name,
+      tasksDone: execs.count,
+      authStatus: prov.auth_status,
+      rateLimitedUntil: prov.rate_limited_until,
+    };
+  });
+  res.json({ ...getCreditUsage(), agentTasksDone, humanTasksDone, providerBreakdown });
 });
 
 // Serve dashboard in production

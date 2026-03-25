@@ -196,29 +196,58 @@ function pickAnalysisType(projectId) {
 
 /**
  * Main entry point: run Smart Mode on the most suitable project.
+ *
+ * Cycles through all unpaused projects and finds an analysis type
+ * that hasn't been run recently, ensuring systematic coverage.
  */
 async function run() {
   const db = getDb();
+  const projects = db.prepare("SELECT * FROM projects WHERE paused = 0 ORDER BY priority ASC").all();
+  if (!projects.length) {
+    log.info('[SmartMode] No projects available');
+    return null;
+  }
 
-  // Pick project with least recent smart mode activity
-  const project = db.prepare(`
+  // Pick a project that hasn't been fully analyzed recently
+  for (const project of projects) {
+    const recent = db.prepare(`
+      SELECT title FROM tasks WHERE project_id = ? AND title LIKE 'Smart Mode:%'
+      ORDER BY created_at DESC LIMIT 5
+    `).all(project.id);
+
+    const recentTypes = recent.map(t => {
+      const match = t.title.match(/Smart Mode: (.+)/);
+      return match ? match[1].toLowerCase().replace(/\s+/g, '_') : '';
+    });
+
+    // Find an analysis type that hasn't been done recently
+    const types = Object.keys(ANALYSIS_PROMPTS);
+    const nextType = types.find(t => !recentTypes.includes(t));
+
+    if (nextType) {
+      return analyzeProject(project.id, nextType);
+    }
+  }
+
+  // All types done recently for all projects — fall back to least-recent project
+  const fallback = db.prepare(`
     SELECT p.* FROM projects p
     LEFT JOIN (
       SELECT project_id, MAX(created_at) as last_analysis
       FROM tasks WHERE title LIKE 'Smart Mode:%'
       GROUP BY project_id
     ) a ON p.id = a.project_id
+    WHERE p.paused = 0
     ORDER BY a.last_analysis ASC NULLS FIRST, p.priority ASC
     LIMIT 1
   `).get();
 
-  if (!project) {
-    log.info('[SmartMode] No projects available');
-    return null;
+  if (fallback) {
+    const analysisType = pickAnalysisType(fallback.id);
+    return analyzeProject(fallback.id, analysisType);
   }
 
-  const analysisType = pickAnalysisType(project.id);
-  return analyzeProject(project.id, analysisType);
+  return null;
 }
 
 module.exports = { run, analyzeProject, pickAnalysisType, ANALYSIS_PROMPTS };

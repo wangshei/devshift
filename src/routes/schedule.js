@@ -15,7 +15,7 @@ router.patch('/', (req, res) => {
   const db = getDb();
   const fields = ['timezone', 'active_hours_start', 'active_hours_end', 'active_days',
     'vacation_mode', 'vacation_until', 'off_today', 'primary_provider',
-    'max_tasks_per_window', 'reserve_percent', 'telegram_bot_token', 'telegram_chat_id'];
+    'max_tasks_per_window', 'reserve_percent', 'telegram_bot_token', 'telegram_chat_id', 'always_on', 'last_checkin'];
   const updates = [];
   const values = [];
 
@@ -60,6 +60,13 @@ router.post('/im-back', (req, res) => {
   db.prepare('UPDATE schedule SET vacation_mode = 0, vacation_until = NULL, off_today = 0 WHERE id = 1').run();
   const schedule = db.prepare('SELECT * FROM schedule WHERE id = 1').get();
   res.json({ message: 'Welcome back! Agent paused.', schedule });
+});
+
+// POST /api/schedule/checkin
+router.post('/checkin', (req, res) => {
+  const db = getDb();
+  db.prepare("UPDATE schedule SET last_checkin = datetime('now') WHERE id = 1").run();
+  res.json({ ok: true });
 });
 
 module.exports = router;

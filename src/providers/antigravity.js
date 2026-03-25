@@ -21,6 +21,34 @@ class AntigravityProvider extends BaseProvider {
   }
 
   async test() {
+    const fs = require('fs');
+    const path = require('path');
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+
+    let account = null;
+
+    // Try reading account from config/credentials files
+    const configPaths = [
+      path.join(home, '.antigravity', 'config.json'),
+      path.join(home, '.antigravity', 'credentials.json'),
+    ];
+    for (const p of configPaths) {
+      try {
+        const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        account = data.email || data.account || null;
+        if (account) break;
+      } catch { /* skip */ }
+    }
+
+    // Try CLI to get email
+    if (!account) {
+      try {
+        const out = execSync('agy config get email 2>&1', { encoding: 'utf-8', timeout: 5000 });
+        const trimmed = out.trim();
+        if (trimmed && trimmed.includes('@')) account = trimmed;
+      } catch { /* not available */ }
+    }
+
     try {
       // agy is the editor CLI — check it exists and responds to --version
       const output = execSync('agy --version 2>&1', {
@@ -28,16 +56,15 @@ class AntigravityProvider extends BaseProvider {
         timeout: 10000,
       });
       const connected = output.length > 0;
-      return { connected, output: `Antigravity ${output.trim().slice(0, 100)}` };
+      return { connected, account: account || null, output: `Antigravity ${output.trim().slice(0, 100)}` };
     } catch (e) {
       // Also check if the app is installed even without CLI
-      const fs = require('fs');
       const appExists = fs.existsSync('/Applications/Antigravity.app') ||
-        fs.existsSync((process.env.HOME || '') + '/.antigravity');
+        fs.existsSync(path.join(home, '.antigravity'));
       if (appExists) {
-        return { connected: true, output: 'Antigravity app installed (CLI may need setup)' };
+        return { connected: true, account: account || null, output: 'Antigravity app installed (CLI may need setup)' };
       }
-      return { connected: false, error: 'Antigravity not found' };
+      return { connected: false, account: null, error: 'Antigravity not found' };
     }
   }
 

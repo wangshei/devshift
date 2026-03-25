@@ -10,7 +10,8 @@ router.get('/', (req, res) => {
   const humanTasks = db.prepare(`
     SELECT t.*, p.name as project_name FROM tasks t
     JOIN projects p ON t.project_id = p.id
-    WHERE t.task_type IN ('human', 'blocked') OR t.status = 'waiting_human' OR t.status = 'needs_review'
+    WHERE (t.status = 'waiting_human' OR t.status = 'needs_review')
+      OR (t.task_type IN ('human', 'blocked') AND t.status != 'done' AND t.status != 'backlog')
     ORDER BY t.priority ASC, t.created_at DESC
   `).all();
 
@@ -72,13 +73,26 @@ router.get('/digest', (req, res) => {
 
   // Group by project
   const byProject = {};
-  for (const t of [...completed, ...needsReview]) {
+  for (const t of [...completed, ...needsReview, ...failed]) {
     const pName = t.project_name;
-    if (!byProject[pName]) byProject[pName] = { completed: 0, needsReview: 0, tasks: [] };
-    if (t.status === 'done') byProject[pName].completed++;
+    if (!byProject[pName]) byProject[pName] = { completed: 0, needsReview: 0, failed: 0, tasks: [], completedTitles: [] };
+    if (t.status === 'done') {
+      byProject[pName].completed++;
+      byProject[pName].completedTitles.push(t.title);
+    }
     if (t.status === 'needs_review') byProject[pName].needsReview++;
+    if (t.status === 'failed') byProject[pName].failed++;
     byProject[pName].tasks.push(t);
   }
+
+  // Total time saved (sum of actual_minutes from completed tasks)
+  const totalTimeSaved = completed.reduce((sum, t) => sum + (t.actual_minutes || 0), 0);
+
+  // Whether there are reviews pending
+  const hasReviewsPending = needsReview.length > 0;
+
+  // Last check-in timestamp
+  const schedule = db.prepare('SELECT last_checkin FROM schedule WHERE id = 1').get();
 
   const sinceHours = Math.round((Date.now() - new Date(sinceDate).getTime()) / 3600000);
 
@@ -89,6 +103,9 @@ router.get('/digest', (req, res) => {
     totalCompleted: completed.length,
     totalNeedsReview: needsReview.length,
     totalFailed: failed.length,
+    totalTimeSaved,
+    hasReviewsPending,
+    lastCheckin: schedule?.last_checkin || null,
     failed,
   });
 });
@@ -100,47 +117,69 @@ router.get('/dashboard', (req, res) => {
   const schedule = db.prepare('SELECT * FROM schedule WHERE id = 1').get();
   const today = new Date().toISOString().split('T')[0];
 
-  const projectSummaries = projects.map(project => {
-    const active = db.prepare(`
-      SELECT * FROM tasks WHERE project_id = ? AND status = 'in_progress'
-    `).all(project.id);
+  // Batch queries — one per metric instead of N×5
+  const activeTasks = db.prepare("SELECT * FROM tasks WHERE status = 'in_progress'").all();
 
-    const completedToday = db.prepare(`
-      SELECT COUNT(*) as count FROM tasks
-      WHERE project_id = ? AND status = 'done' AND completed_at > ?
-    `).get(project.id, today).count;
+  const completedTodayRows = db.prepare(`
+    SELECT project_id, COUNT(*) as count FROM tasks
+    WHERE status = 'done' AND completed_at > ?
+    GROUP BY project_id
+  `).all(today);
 
-    const needsReview = db.prepare(`
-      SELECT COUNT(*) as count FROM tasks
-      WHERE project_id = ? AND (status = 'needs_review' OR status = 'waiting_human'
-        OR (task_type = 'human' AND status != 'done'))
-    `).get(project.id).count;
+  const needsReviewRows = db.prepare(`
+    SELECT project_id, COUNT(*) as count FROM tasks
+    WHERE (status IN ('needs_review', 'waiting_human'))
+      OR (task_type IN ('human', 'blocked') AND status != 'done' AND status != 'backlog')
+    GROUP BY project_id
+  `).all();
 
-    const backlog = db.prepare(`
-      SELECT COUNT(*) as count FROM tasks
-      WHERE project_id = ? AND status IN ('backlog', 'queued') AND task_type = 'agent'
-    `).get(project.id).count;
+  const backlogRows = db.prepare(`
+    SELECT project_id, COUNT(*) as count FROM tasks
+    WHERE status IN ('backlog', 'queued') AND task_type = 'agent'
+    GROUP BY project_id
+  `).all();
 
-    const nextTask = db.prepare(`
-      SELECT title FROM tasks
-      WHERE project_id = ? AND status IN ('backlog', 'queued') AND task_type = 'agent'
-      ORDER BY priority ASC,
-        CASE tier WHEN 1 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 ELSE 3 END,
-        created_at ASC
-      LIMIT 1
-    `).get(project.id);
+  const nextTaskRows = db.prepare(`
+    SELECT project_id, title FROM tasks
+    WHERE status IN ('backlog', 'queued') AND task_type = 'agent'
+    ORDER BY priority ASC,
+      CASE tier WHEN 1 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 ELSE 3 END,
+      created_at ASC
+  `).all();
 
-    return {
-      project,
-      activeTask: active[0] || null,
-      completedToday,
-      needsReview,
-      backlog,
-      nextTask: nextTask?.title || null,
-    };
-  });
+  // Build lookup maps
+  const activeByProject = {};
+  for (const t of activeTasks) {
+    if (!activeByProject[t.project_id]) activeByProject[t.project_id] = t;
+  }
+  const completedTodayMap = {};
+  for (const r of completedTodayRows) completedTodayMap[r.project_id] = r.count;
+  const needsReviewMap = {};
+  for (const r of needsReviewRows) needsReviewMap[r.project_id] = r.count;
+  const backlogMap = {};
+  for (const r of backlogRows) backlogMap[r.project_id] = r.count;
+  const nextTaskMap = {};
+  for (const r of nextTaskRows) {
+    if (!nextTaskMap[r.project_id]) nextTaskMap[r.project_id] = r.title;
+  }
 
-  res.json({ projects: projectSummaries, schedule });
+  const projectSummaries = projects.map(project => ({
+    project,
+    activeTask: activeByProject[project.id] || null,
+    completedToday: completedTodayMap[project.id] || 0,
+    needsReview: needsReviewMap[project.id] || 0,
+    backlog: backlogMap[project.id] || 0,
+    nextTask: nextTaskMap[project.id] || null,
+  }));
+
+  const recentCompleted = db.prepare(`
+    SELECT t.*, p.name as project_name FROM tasks t
+    JOIN projects p ON t.project_id = p.id
+    WHERE t.status = 'done'
+    ORDER BY t.completed_at DESC LIMIT 10
+  `).all();
+
+  res.json({ projects: projectSummaries, schedule, recentCompleted });
 });
 
 // GET /api/timeline/project/:id — full timeline for one project
@@ -153,7 +192,8 @@ router.get('/project/:id', (req, res) => {
 
   const humanTasks = db.prepare(`
     SELECT * FROM tasks WHERE project_id = ?
-      AND (task_type IN ('human', 'blocked') OR status = 'waiting_human' OR status = 'needs_review')
+      AND ((status = 'waiting_human' OR status = 'needs_review')
+        OR (task_type IN ('human', 'blocked') AND status != 'done' AND status != 'backlog'))
     ORDER BY priority ASC, created_at DESC
   `).all(projectId);
 
@@ -175,7 +215,12 @@ router.get('/project/:id', (req, res) => {
     LIMIT 20
   `).all(projectId);
 
-  res.json({ project, humanTasks, completed, inProgress, planned });
+  const failed = db.prepare(`
+    SELECT * FROM tasks WHERE project_id = ? AND status = 'failed'
+    ORDER BY started_at DESC LIMIT 5
+  `).all(projectId);
+
+  res.json({ project, humanTasks, completed, inProgress, planned, failed });
 });
 
 module.exports = router;

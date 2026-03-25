@@ -17,28 +17,54 @@ class CursorProvider extends BaseProvider {
   }
 
   async test() {
+    const fs = require('fs');
+    const path = require('path');
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+
+    let account = null;
+
+    // Try ~/.cursor/ for any JSON config with email
+    const cursorConfigPaths = [
+      path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'settings.json'),
+    ];
+    // Also scan ~/.cursor/ for JSON files
+    try {
+      const cursorDir = path.join(home, '.cursor');
+      const files = fs.readdirSync(cursorDir).filter(f => f.endsWith('.json'));
+      for (const f of files) {
+        cursorConfigPaths.push(path.join(cursorDir, f));
+      }
+    } catch { /* dir not readable */ }
+
+    for (const p of cursorConfigPaths) {
+      try {
+        const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        account = data.email || data.account || data['cursor.email'] || null;
+        if (account) break;
+      } catch { /* skip */ }
+    }
+
     // Check CLI first
     try {
       execSync('which cursor', { stdio: 'ignore', timeout: 5000 });
-      return { connected: true, output: 'Cursor CLI found on PATH' };
+      return { connected: true, account: account || null, output: 'Cursor CLI found on PATH' };
     } catch { /* not on PATH */ }
 
     // Check if Cursor app is installed (macOS)
-    const fs = require('fs');
-    const path = require('path');
     const appPaths = [
       '/Applications/Cursor.app',
-      path.join(process.env.HOME || '', 'Applications/Cursor.app'),
+      path.join(home, 'Applications', 'Cursor.app'),
     ];
     for (const p of appPaths) {
       if (fs.existsSync(p)) {
         return {
           connected: true,
+          account: account || null,
           output: 'Cursor app installed (enable CLI: Cmd+Shift+P → "Install cursor command")',
         };
       }
     }
-    return { connected: false, error: 'Cursor not found' };
+    return { connected: false, account: null, error: 'Cursor not found' };
   }
 
   async getPlanInfo() {

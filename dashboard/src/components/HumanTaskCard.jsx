@@ -1,6 +1,18 @@
 import React, { useState } from 'react';
 import { api } from '../hooks/useApi';
 
+function cleanSummary(text) {
+  if (!text) return null;
+  let s = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+  try {
+    const parsed = JSON.parse(s.startsWith('[') ? s : s.match(/\[[\s\S]*\]/)?.[0] || '');
+    if (Array.isArray(parsed) && parsed[0]?.title) {
+      return `Generated ${parsed.length} task${parsed.length !== 1 ? 's' : ''}: ${parsed.slice(0, 2).map(t => t.title).join(', ')}${parsed.length > 2 ? '…' : ''}`;
+    }
+  } catch { /* not JSON */ }
+  return s.slice(0, 300);
+}
+
 export default function HumanTaskCard({ task, onAction }) {
   const [showDiff, setShowDiff] = useState(false);
   const [diff, setDiff] = useState(null);
@@ -56,11 +68,11 @@ export default function HumanTaskCard({ task, onAction }) {
               )}
             </div>
             <p className="text-sm mt-0.5 text-text">{task.title}</p>
-            {task.result_summary && (
-              <p className="text-xs text-muted mt-1">{task.result_summary}</p>
+            {cleanSummary(task.result_summary) && (
+              <p className="text-xs text-muted mt-1">{cleanSummary(task.result_summary)}</p>
             )}
-            {task.review_instructions && (
-              <p className="text-xs text-muted mt-1 italic">{task.review_instructions}</p>
+            {cleanSummary(task.review_instructions) && (
+              <p className="text-xs text-muted mt-1 italic">{cleanSummary(task.review_instructions)}</p>
             )}
           </div>
           {task.pr_url && (

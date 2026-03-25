@@ -11,6 +11,8 @@ export default function ProjectDetail() {
   const { data, refetch } = useApi(`/timeline/project/${id}`, [], 5000);
   const [editing, setEditing] = useState(false);
   const [context, setContext] = useState('');
+  const [renamingName, setRenamingName] = useState(false);
+  const [nameValue, setNameValue] = useState('');
 
   if (!data) return (
     <div className="max-w-2xl mx-auto px-4 py-6">
@@ -28,6 +30,25 @@ export default function ProjectDetail() {
     refetch();
   };
 
+  const handleRenameStart = () => {
+    setNameValue(project.name);
+    setRenamingName(true);
+  };
+
+  const handleRenameCommit = async () => {
+    const trimmed = nameValue.trim();
+    if (trimmed && trimmed !== project.name) {
+      await api(`/projects/${id}`, { method: 'PATCH', body: { name: trimmed } });
+      refetch();
+    }
+    setRenamingName(false);
+  };
+
+  const handleRenameKeyDown = (e) => {
+    if (e.key === 'Enter') e.target.blur();
+    if (e.key === 'Escape') { setRenamingName(false); }
+  };
+
   const handleDelete = async () => {
     if (!confirm(`Delete "${project.name}" and all its tasks?`)) return;
     await api(`/projects/${id}`, { method: 'DELETE' });
@@ -43,7 +64,24 @@ export default function ProjectDetail() {
           &#8592; Back
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold truncate">{project.name}</h1>
+          {renamingName ? (
+            <input
+              autoFocus
+              value={nameValue}
+              onChange={e => setNameValue(e.target.value)}
+              onBlur={handleRenameCommit}
+              onKeyDown={handleRenameKeyDown}
+              className="text-xl font-bold bg-transparent border-b border-accent outline-none w-full truncate"
+            />
+          ) : (
+            <h1
+              className="text-xl font-bold truncate cursor-pointer hover:opacity-70 transition-opacity"
+              title="Click to rename"
+              onClick={handleRenameStart}
+            >
+              {project.name}
+            </h1>
+          )}
         </div>
       </div>
 
