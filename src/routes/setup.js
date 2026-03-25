@@ -28,7 +28,7 @@ router.get('/status', (req, res) => {
   const detected = detectProviders();
 
   res.json({
-    needsSetup: !schedule.setup_complete,
+    needsSetup: !schedule.setup_complete || projectCount === 0,
     hasProjects: projectCount > 0,
     hasProviders: providerCount > 0,
     projectCount,
@@ -136,6 +136,76 @@ router.post('/projects/scan', (req, res) => {
   if (existing) info.alreadyAdded = existing.name;
 
   res.json(info);
+});
+
+// GET /api/setup/scan-local — find git repos in common locations
+router.get('/scan-local', (req, res) => {
+  const os = require('os');
+  const home = os.homedir();
+
+  const searchDirs = [
+    path.join(home, 'Desktop'),
+    path.join(home, 'Documents'),
+    path.join(home, 'code'),
+    path.join(home, 'projects'),
+    path.join(home, 'dev'),
+    path.join(home, 'workspace'),
+    path.join(home, 'repos'),
+    path.join(home, 'src'),
+  ].filter(d => fs.existsSync(d));
+
+  const found = [];
+  const db = getDb();
+
+  function scanDir(dir, depth) {
+    if (depth > 2 || found.length > 50) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+
+    // If this dir itself is a git repo, add it
+    if (fs.existsSync(path.join(dir, '.git'))) {
+      const existing = db.prepare('SELECT id FROM projects WHERE repo_path = ?').get(dir);
+      if (!existing) {
+        const info = { path: dir, name: path.basename(dir) };
+        // Try package.json for stack
+        const pkgPath = path.join(dir, 'package.json');
+        if (fs.existsSync(pkgPath)) {
+          try {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+            if (pkg.name) info.name = pkg.name;
+            const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+            const stack = [];
+            if (deps.react) stack.push('React');
+            if (deps.next) stack.push('Next.js');
+            if (deps.vue) stack.push('Vue');
+            if (deps.express) stack.push('Express');
+            if (deps.typescript) stack.push('TypeScript');
+            if (stack.length) info.stack = stack;
+          } catch { /* ignore */ }
+        }
+        if (fs.existsSync(path.join(dir, 'Cargo.toml'))) info.stack = ['Rust'];
+        if (fs.existsSync(path.join(dir, 'go.mod'))) info.stack = ['Go'];
+        if (fs.existsSync(path.join(dir, 'requirements.txt')) ||
+            fs.existsSync(path.join(dir, 'pyproject.toml'))) info.stack = ['Python'];
+        found.push(info);
+      }
+      return; // Don't recurse into git repos
+    }
+
+    // Otherwise recurse into subdirectories
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      scanDir(path.join(dir, entry.name), depth + 1);
+      if (found.length > 50) break;
+    }
+  }
+
+  for (const dir of searchDirs) {
+    scanDir(dir, 0);
+  }
+
+  res.json({ repos: found, searched: searchDirs });
 });
 
 module.exports = router;

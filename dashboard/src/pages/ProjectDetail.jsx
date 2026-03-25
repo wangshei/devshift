@@ -3,13 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useApi, api } from '../hooks/useApi';
 import HumanTaskCard from '../components/HumanTaskCard';
 import TimelineEntry from '../components/TimelineEntry';
+import TaskInput from '../components/TaskInput';
 
 export default function ProjectDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data, refetch } = useApi(`/timeline/project/${id}`);
-  const [taskTitle, setTaskTitle] = useState('');
-  const [adding, setAdding] = useState(false);
+  const { data, refetch } = useApi(`/timeline/project/${id}`, [], 5000);
   const [editing, setEditing] = useState(false);
   const [context, setContext] = useState('');
 
@@ -22,18 +21,6 @@ export default function ProjectDetail() {
   const { project, humanTasks, completed, inProgress, planned } = data;
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const isEmpty = !humanTasks?.length && !inProgress?.length && !completed?.length && !planned?.length;
-
-  const handleAddTask = async (e) => {
-    e.preventDefault();
-    if (!taskTitle.trim()) return;
-    setAdding(true);
-    try {
-      await api('/tasks', { method: 'POST', body: { project_id: id, title: taskTitle.trim() } });
-      setTaskTitle('');
-      refetch();
-    } catch { /* ignore */ }
-    finally { setAdding(false); }
-  };
 
   const handleSaveContext = async () => {
     await api(`/projects/${id}`, { method: 'PATCH', body: { context } });
@@ -146,22 +133,11 @@ export default function ProjectDetail() {
       </div>
 
       {/* Task input */}
-      <form onSubmit={handleAddTask}
-        className="fixed bottom-16 md:bottom-0 left-0 right-0 md:relative md:mt-4 bg-bg p-4 md:p-0 border-t md:border-0 border-border">
-        <div className="max-w-2xl mx-auto flex gap-2">
-          <input
-            type="text"
-            value={taskTitle}
-            onChange={e => setTaskTitle(e.target.value)}
-            placeholder={`Add task to ${project.name}...`}
-            className="flex-1 bg-card border border-border rounded-lg px-3 py-2 text-sm text-text placeholder:text-vmuted focus:outline-none focus:border-accent"
-          />
-          <button type="submit" disabled={!taskTitle.trim() || adding}
-            className="px-4 py-2 bg-accent text-white text-sm font-medium rounded-lg hover:bg-accent/80 disabled:opacity-40 transition-colors">
-            +
-          </button>
+      <div className="fixed bottom-16 md:bottom-0 left-0 right-0 md:relative md:mt-4 bg-bg p-4 md:p-0 border-t md:border-0 border-border">
+        <div className="max-w-2xl mx-auto">
+          <TaskInput fixedProjectId={id} onTaskAdded={refetch} />
         </div>
-      </form>
+      </div>
     </div>
   );
 }

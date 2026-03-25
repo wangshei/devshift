@@ -8,7 +8,7 @@ const MODE_LABELS = {
 };
 
 export default function AgentStatusBar() {
-  const { data: status, refetch } = useApi('/agent/status');
+  const { data: status, refetch } = useApi('/agent/status', [], 4000);
 
   if (!status) return null;
 

@@ -6,7 +6,7 @@ import ProjectStatusCard from '../components/ProjectStatusCard';
 import TaskInput from '../components/TaskInput';
 
 export default function Dashboard() {
-  const { data, refetch } = useApi('/timeline/dashboard');
+  const { data, refetch } = useApi('/timeline/dashboard', [], 5000);
   const [showAddProject, setShowAddProject] = useState(false);
   const [pathInput, setPathInput] = useState('');
   const [adding, setAdding] = useState(false);

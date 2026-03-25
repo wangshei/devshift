@@ -1,22 +1,35 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 const BASE = '/api';
 
-export function useApi(path, deps = []) {
+export function useApi(path, deps = [], pollInterval = 0) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const dataRef = useRef(null);
 
   const refetch = useCallback(() => {
     setLoading(true);
     fetch(`${BASE}${path}`)
       .then(r => r.json())
-      .then(d => { setData(d); setError(null); })
+      .then(d => { dataRef.current = d; setData(d); setError(null); })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, [path, ...deps]);
 
   useEffect(() => { refetch(); }, [refetch]);
+
+  // Silent poll (no loading flash)
+  useEffect(() => {
+    if (!pollInterval) return;
+    const id = setInterval(() => {
+      fetch(`${BASE}${path}`)
+        .then(r => r.json())
+        .then(d => { dataRef.current = d; setData(d); })
+        .catch(() => {});
+    }, pollInterval);
+    return () => clearInterval(id);
+  }, [path, pollInterval]);
 
   return { data, loading, error, refetch };
 }
