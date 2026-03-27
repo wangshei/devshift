@@ -59,8 +59,14 @@ function detectProviders() {
       db.prepare(`
         INSERT INTO providers (id, name, enabled, cli_command, auth_status)
         VALUES (?, ?, ?, ?, ?)
-      `).run(p.id, p.name, installed ? 1 : 0, p.cli, installed ? 'unknown' : 'not_installed');
+      `).run(p.id, p.name, installed ? 1 : 0, p.cli, installed ? 'detected' : 'not_installed');
       log.info(`Provider ${p.name}: ${installed ? 'detected' : 'not found'}`);
+    }
+
+    // Update auth status for detected providers (handles re-detection after install)
+    if (installed) {
+      db.prepare("UPDATE providers SET auth_status = 'detected' WHERE id = ? AND auth_status = 'not_installed'").run(p.id);
+      db.prepare("UPDATE providers SET enabled = 1 WHERE id = ? AND auth_status = 'detected'").run(p.id);
     }
 
     results.push({
@@ -85,27 +91,23 @@ function getProviders() {
 /**
  * Pick the best provider for a given task tier.
  * Respects rate limits, enabled status, and tier routing.
+ * @param {number} tier - task tier (1, 2, or 3)
+ * @param {string|null} excludeId - optional provider ID to exclude (for fallback retries)
  */
-function pickProvider(tier) {
+function pickProvider(tier, excludeId = null) {
   const db = getDb();
   const now = new Date().toISOString();
-  const providers = db.prepare(`
-    SELECT * FROM providers
-    WHERE enabled = 1
-      AND (rate_limited_until IS NULL OR rate_limited_until < ?)
-    ORDER BY priority ASC
-  `).all(now);
+  let query = `SELECT * FROM providers WHERE enabled = 1 AND (rate_limited_until IS NULL OR rate_limited_until < ?) ORDER BY priority ASC`;
+  const providers = db.prepare(query).all(now);
 
-  // Find a provider that handles this tier
   for (const p of providers) {
+    if (excludeId && p.id === excludeId) continue;
     const tiers = (p.use_for_tiers || '1,2,3').split(',').map(Number);
-    if (tiers.includes(tier)) {
-      return p;
-    }
+    if (tiers.includes(tier)) return p;
   }
 
-  // Fallback: any available provider
-  return providers[0] || null;
+  // Fallback: any available provider (except excluded)
+  return providers.find(p => !excludeId || p.id !== excludeId) || null;
 }
 
 module.exports = { detectProviders, getProviders, pickProvider, KNOWN_PROVIDERS };

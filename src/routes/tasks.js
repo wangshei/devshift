@@ -23,6 +23,34 @@ router.get('/', (req, res) => {
   res.json(tasks);
 });
 
+// GET /api/tasks/suggested/:projectId — get suggested tasks for a project
+router.get('/suggested/:projectId', (req, res) => {
+  const db = getDb();
+  const tasks = db.prepare(`
+    SELECT t.*, parent.title as parent_title FROM tasks t
+    LEFT JOIN tasks parent ON t.parent_task_id = parent.id
+    WHERE t.project_id = ? AND t.status = 'suggested'
+    ORDER BY t.created_at DESC
+  `).all(req.params.projectId);
+  res.json(tasks);
+});
+
+// POST /api/tasks/:id/approve-suggestion — convert suggested task to backlog
+router.post('/:id/approve-suggestion', (req, res) => {
+  const db = getDb();
+  db.prepare("UPDATE tasks SET status = 'backlog', priority = 5 WHERE id = ? AND status = 'suggested'")
+    .run(req.params.id);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  res.json(task);
+});
+
+// POST /api/tasks/:id/dismiss-suggestion — remove suggested task
+router.post('/:id/dismiss-suggestion', (req, res) => {
+  const db = getDb();
+  db.prepare("DELETE FROM tasks WHERE id = ? AND status = 'suggested'").run(req.params.id);
+  res.json({ dismissed: true });
+});
+
 // GET /api/tasks/:id
 router.get('/:id', (req, res) => {
   const db = getDb();

@@ -185,12 +185,15 @@ class ClaudeCodeProvider extends BaseProvider {
   _buildPrompt(task, project) {
     let prompt = task.title;
     if (task.description) prompt += `\n\n${task.description}`;
+    if (project.goal_md && project.goal_approved) {
+      prompt += `\n\n## Product Goal\n${project.goal_md}\n\nEnsure your work aligns with this product goal.`;
+    }
     if (project.context) prompt += `\n\nProject context: ${project.context}`;
     if (project.preferences) {
       try {
         const prefs = JSON.parse(project.preferences);
-        if (Array.isArray(prefs)) prompt += `\n\nProject rules:\n${prefs.join('\n')}`;
-        else prompt += `\n\nProject rules: ${JSON.stringify(prefs)}`;
+        if (Array.isArray(prefs) && prefs.length > 0) prompt += `\n\nProject standards (you MUST follow these):\n${prefs.map(r => `- ${r}`).join('\n')}`;
+        else if (typeof prefs === 'object') prompt += `\n\nProject standards: ${JSON.stringify(prefs)}`;
       } catch { /* ignore parse errors */ }
     }
     return prompt;

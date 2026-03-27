@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import ProjectFeed from './pages/ProjectFeed';
 import Settings from './pages/Settings';
+import Usage from './pages/Usage';
 import Setup from './pages/Setup';
 import ThemeToggle from './components/ThemeToggle';
 
@@ -55,6 +56,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/project/:id" element={<ProjectFeed />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/usage" element={<Usage />} />
           </Routes>
         </main>
       </div>
@@ -66,6 +68,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/project/:id" element={<ProjectFeed />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/usage" element={<Usage />} />
           </Routes>
         </main>
         <MobileBottomNav />

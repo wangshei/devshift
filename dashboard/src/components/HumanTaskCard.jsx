@@ -68,6 +68,37 @@ export default function HumanTaskCard({ task, onAction }) {
               )}
             </div>
             <p className="text-sm mt-0.5 text-text">{task.title}</p>
+            {/* What to check */}
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {task.pr_url ? (
+                <a href={task.pr_url} target="_blank" rel="noopener noreferrer"
+                  className="text-[10px] px-2 py-0.5 bg-accent/10 text-accent rounded-full hover:bg-accent/20">
+                  View PR #{task.pr_number} on GitHub
+                </a>
+              ) : task.branch_name ? (
+                <span className="text-[10px] px-2 py-0.5 bg-bg text-muted rounded-full font-mono">
+                  Branch: {task.branch_name}
+                </span>
+              ) : null}
+              {task.branch_name && (
+                <button
+                  onClick={() => api('/open-file', { method: 'POST', body: { file_path: task.branch_name } }).catch(() => {})}
+                  className="text-[10px] px-2 py-0.5 bg-hover text-accent rounded-full hover:bg-accent/10 font-mono"
+                >
+                  Open in editor
+                </button>
+              )}
+              {task.status === 'needs_review' && (
+                <span className="text-[10px] px-2 py-0.5 bg-warning/10 text-warning rounded-full">
+                  Needs your review
+                </span>
+              )}
+              {task.status === 'waiting_human' && (
+                <span className="text-[10px] px-2 py-0.5 bg-accent/10 text-accent rounded-full">
+                  Decision needed
+                </span>
+              )}
+            </div>
             {cleanSummary(task.result_summary) && (
               <p className="text-xs text-muted mt-1">{cleanSummary(task.result_summary)}</p>
             )}

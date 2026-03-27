@@ -159,6 +159,25 @@ function migrate() {
     database.exec("ALTER TABLE projects ADD COLUMN auto_approve_tiers TEXT DEFAULT '1'");
   }
 
+  // Goal document per project
+  if (!projectCols.find(c => c.name === 'goal_md')) {
+    database.exec("ALTER TABLE projects ADD COLUMN goal_md TEXT");
+  }
+  if (!projectCols.find(c => c.name === 'goal_approved')) {
+    database.exec("ALTER TABLE projects ADD COLUMN goal_approved INTEGER DEFAULT 0");
+  }
+
+  // Migration: add services column to projects if missing
+  if (!projectCols.find(c => c.name === 'services')) {
+    database.exec("ALTER TABLE projects ADD COLUMN services TEXT DEFAULT '{}'");
+  }
+
+  // Migration: add debrief column to tasks if missing
+  const taskCols = database.pragma('table_info(tasks)');
+  if (!taskCols.find(c => c.name === 'debrief')) {
+    database.exec("ALTER TABLE tasks ADD COLUMN debrief TEXT");
+  }
+
   log.info('Database migration complete');
 }
 

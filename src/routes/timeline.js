@@ -220,7 +220,57 @@ router.get('/project/:id', (req, res) => {
     ORDER BY started_at DESC LIMIT 5
   `).all(projectId);
 
-  res.json({ project, humanTasks, completed, inProgress, planned, failed });
+  const suggested = db.prepare(`
+    SELECT t.*, parent.title as parent_title FROM tasks t
+    LEFT JOIN tasks parent ON t.parent_task_id = parent.id
+    WHERE t.project_id = ? AND t.status = 'suggested'
+    ORDER BY t.created_at DESC
+  `).all(projectId);
+
+  res.json({ project, humanTasks, completed, inProgress, planned, failed, suggested });
+});
+
+// GET /api/timeline/usage — activity grid + per-project breakdown
+router.get('/usage', (req, res) => {
+  const db = getDb();
+  const { range } = req.query; // 'week', 'month', or 'year'
+  const daysBack = range === 'year' ? 365 : range === 'month' ? 30 : 7;
+  const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
+
+  // Daily activity (for grid)
+  const dailyActivity = db.prepare(`
+    SELECT DATE(started_at) as day, COUNT(*) as total,
+      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as succeeded,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+      SUM(COALESCE(estimated_credits, 0)) as credits
+    FROM executions WHERE started_at > ?
+    GROUP BY DATE(started_at)
+    ORDER BY day ASC
+  `).all(since);
+
+  // Per-project breakdown
+  const perProject = db.prepare(`
+    SELECT p.id, p.name, COUNT(e.id) as total,
+      SUM(CASE WHEN e.status = 'completed' THEN 1 ELSE 0 END) as succeeded,
+      SUM(CASE WHEN e.status = 'failed' THEN 1 ELSE 0 END) as failed,
+      SUM(COALESCE(e.estimated_credits, 0)) as credits
+    FROM executions e
+    JOIN projects p ON e.project_id = p.id
+    WHERE e.started_at > ?
+    GROUP BY p.id
+    ORDER BY total DESC
+  `).all(since);
+
+  // Totals
+  const totals = db.prepare(`
+    SELECT COUNT(*) as total,
+      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as succeeded,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+      SUM(COALESCE(estimated_credits, 0)) as credits
+    FROM executions WHERE started_at > ?
+  `).get(since);
+
+  res.json({ dailyActivity, perProject, totals, daysBack });
 });
 
 module.exports = router;

@@ -155,8 +155,23 @@ function getDefaultBranch(repoPath) {
   }
 }
 
+/**
+ * Fetch latest from remote.
+ */
+function fetch(repoPath, remote = 'origin') {
+  execSync(`git fetch ${remote}`, { cwd: repoPath, encoding: 'utf-8', timeout: 30000 });
+}
+
+/**
+ * Pull latest changes (fast-forward only).
+ */
+function pull(repoPath) {
+  execSync('git pull --ff-only', { cwd: repoPath, encoding: 'utf-8', timeout: 30000 });
+}
+
 module.exports = {
   git, currentBranch, createBranch, commitAll, push,
   checkout, tag, hasChanges, diffSummary,
   branchDiff, branchDiffStat, mergeBranch, deleteBranch, getDefaultBranch,
+  fetch, pull,
 };

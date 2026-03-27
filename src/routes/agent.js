@@ -139,4 +139,61 @@ router.get('/smart-mode/types', (req, res) => {
   })));
 });
 
+// GET /api/agent/missions — list available missions
+router.get('/missions', (req, res) => {
+  const { MISSIONS } = require('../services/missions');
+  const list = Object.entries(MISSIONS).map(([id, m]) => ({
+    id,
+    name: m.name,
+    description: m.description,
+    icon: m.icon,
+  }));
+  res.json(list);
+});
+
+// POST /api/agent/missions/run — run a mission on a project
+router.post('/missions/run', async (req, res) => {
+  const { project_id, mission_type } = req.body;
+  if (!project_id || !mission_type) {
+    return res.status(400).json({ error: 'project_id and mission_type required' });
+  }
+
+  try {
+    const { runMission } = require('../services/missions');
+    const result = await runMission(project_id, mission_type);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/agent/scan-project — analyze project and create tasks
+router.post('/scan-project', async (req, res) => {
+  const { project_id } = req.body;
+  if (!project_id) return res.status(400).json({ error: 'project_id required' });
+
+  const db = getDb();
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(project_id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  try {
+    const smartMode = require('../services/smart-mode');
+    // Run all analysis types
+    const types = ['code_quality', 'test_coverage', 'security', 'documentation'];
+    let totalTasks = 0;
+    for (const type of types) {
+      try {
+        const result = await smartMode.analyzeProject(project_id, type);
+        if (result?.tasksCreated) totalTasks += result.tasksCreated;
+      } catch (e) {
+        log.warn(`[ScanProject] ${type} analysis failed: ${e.message}`);
+      }
+    }
+
+    res.json({ success: true, tasksCreated: totalTasks, message: `Found ${totalTasks} tasks for ${project.name}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

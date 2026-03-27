@@ -63,11 +63,12 @@ function isOffHours() {
 
 /**
  * Pick the next task to execute based on priority ordering.
+ * @param {Set|null} excludeRepos - optional set of repo paths to skip (for parallel execution)
  */
-function pickNextTask() {
+function pickNextTask(excludeRepos = null) {
   const db = getDb();
-  return db.prepare(`
-    SELECT t.* FROM tasks t
+  let tasks = db.prepare(`
+    SELECT t.*, p.repo_path FROM tasks t
     JOIN projects p ON t.project_id = p.id
     WHERE t.status IN ('backlog', 'queued') AND t.task_type = 'agent'
       AND p.paused = 0
@@ -81,8 +82,14 @@ function pickNextTask() {
       t.priority ASC,
       CASE t.tier WHEN 1 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 ELSE 3 END,
       t.created_at ASC
-    LIMIT 1
-  `).get();
+    LIMIT 10
+  `).all();
+
+  if (excludeRepos) {
+    tasks = tasks.filter(t => !excludeRepos.has(t.repo_path));
+  }
+
+  return tasks[0] || null;
 }
 
 /**
@@ -161,40 +168,52 @@ async function tick() {
   schedulerRunning = true;
 
   try {
-    // --- WORK MODE: process all available backlog tasks in a row ---
-    let task = pickNextTask();
-    let tasksExecutedThisTick = 0;
+    const db = getDb();
 
-    while (task && tasksExecutedThisTick < 3) { // max 3 per tick to not hog
-      const workMode = require('./work-mode');
-      if (workMode.needsImprovement(task.title)) {
-        try {
-          const result = await workMode.improvePrompt(task.id);
-          if (result.improved && result.subtaskCount > 0) {
-            task = pickNextTask(); // pick the first subtask
-            continue;
-          }
-        } catch (e) {
-          log.warn(`[WorkMode] Improvement failed: ${e.message}`);
-        }
-      }
+    // --- WORK MODE: process tasks in parallel across different repos ---
+    let tasksToRun = [];
+    let seenRepos = new Set();
+
+    // Collect up to 3 tasks on different repos
+    for (let attempt = 0; attempt < 10 && tasksToRun.length < 3; attempt++) {
+      const task = pickNextTask(seenRepos);
+      if (!task) break;
+
+      const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
+      if (!project || seenRepos.has(project.repo_path)) continue;
 
       if (!canAffordTask(task)) break;
 
-      const freshTask = getDb().prepare("SELECT * FROM tasks WHERE id = ? AND status IN ('backlog', 'queued')").get(task.id);
-      if (freshTask) {
-        log.info(`Scheduler [WorkMode]: executing "${freshTask.title}"`);
-        await executeTask(freshTask.id);
-        tasksExecutedThisTick++;
-      }
-
-      // Check if we should continue
-      if (getTasksExecutedThisWindow() >= maxTasks) break;
-      task = pickNextTask();
+      seenRepos.add(project.repo_path);
+      tasksToRun.push(task);
     }
 
+    if (tasksToRun.length > 0) {
+      // Run all in parallel
+      await Promise.all(tasksToRun.map(async (task) => {
+        const workMode = require('./work-mode');
+        if (workMode.needsImprovement(task.title)) {
+          try {
+            const result = await workMode.improvePrompt(task.id);
+            if (result.improved && result.subtaskCount > 0) return; // subtasks created, will be picked up next tick
+          } catch (e) {
+            log.warn(`[WorkMode] Improvement failed: ${e.message}`);
+          }
+        }
+
+        const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ? AND status IN ('backlog', 'queued')").get(task.id);
+        if (freshTask) {
+          log.info(`Scheduler [WorkMode]: executing "${freshTask.title}"`);
+          await executeTask(freshTask.id);
+        }
+      }));
+    }
+
+    // Check if there are more tasks
+    const remainingTask = pickNextTask();
+
     // --- SMART MODE: if no backlog tasks and credits available, be proactive ---
-    if (!task) {
+    if (!remainingTask) {
       const credits = getCreditUsage();
       if (credits.availablePercent > 10) {
         await runSmartModeForAllProjects();

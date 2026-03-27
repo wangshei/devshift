@@ -77,6 +77,20 @@ async function executeTask(taskId) {
 
   log.info(`Executing task "${task.title}" via ${providerRecord.name}`);
 
+  // Fetch latest from remote if available
+  if (project.github_remote) {
+    try {
+      gitUtils.fetch(project.repo_path);
+      // Pull latest on main/master
+      const currentBranch = gitUtils.currentBranch(project.repo_path);
+      if (currentBranch === 'main' || currentBranch === 'master') {
+        gitUtils.pull(project.repo_path);
+      }
+    } catch (e) {
+      log.warn(`Could not fetch latest: ${e.message}`);
+    }
+  }
+
   // Create a branch for this task — always start from main/master
   const branchName = `devshift/${task.id.slice(0, 8)}-${slugify(task.title)}`;
   let mainBranch;
@@ -96,7 +110,7 @@ async function executeTask(taskId) {
 
   // Execute the task
   const startTime = Date.now();
-  const result = await provider.execute(task, project, { model: task.model, logPath });
+  let result = await provider.execute(task, project, { model: task.model, logPath });
   const durationMin = Math.round((Date.now() - startTime) / 60000);
 
   if (!result.success) {
@@ -108,13 +122,33 @@ async function executeTask(taskId) {
       log.warn(`Provider ${providerRecord.name} rate limited until ${backoffUntil}`);
     }
 
-    // Try to go back to main branch
-    if (mainBranch) {
-      try { gitUtils.checkout(project.repo_path, mainBranch); } catch { /* ignore */ }
+    // Try fallback provider (different from the one that just failed)
+    if (!result.rateLimited) {
+      const { pickProvider: pickFallback } = require('../providers');
+      const fallbackProvider = pickFallback(task.tier, providerRecord.id);
+      if (fallbackProvider && fallbackProvider.id !== providerRecord.id) {
+        log.info(`[Executor] Retrying "${task.title}" with fallback provider ${fallbackProvider.name}`);
+        const fallbackInstance = getProviderInstance(fallbackProvider.id);
+        if (fallbackInstance) {
+          const retryResult = await fallbackInstance.execute(task, project, { model: task.model, logPath });
+          if (retryResult.success) {
+            db.prepare('UPDATE executions SET provider = ? WHERE id = ?').run(fallbackProvider.id, execId);
+            result = retryResult;
+          }
+        }
+      }
     }
 
-    return failTask(db, taskId, execId, project.id,
-      result.error || 'Execution failed', result.output, durationMin, project.repo_path);
+    // If still not successful after fallback attempt, fail the task
+    if (!result.success) {
+      // Try to go back to main branch
+      if (mainBranch) {
+        try { gitUtils.checkout(project.repo_path, mainBranch); } catch { /* ignore */ }
+      }
+
+      return failTask(db, taskId, execId, project.id,
+        result.error || 'Execution failed', result.output, durationMin, project.repo_path);
+    }
   }
 
   // Commit any changes
@@ -185,13 +219,21 @@ async function executeTask(taskId) {
     result.output.slice(0, 2000), reviewInstructions, durationMin, taskId);
 
   // Update execution
+  const { estimateCreditCost } = require('./planner');
+  const creditCost = estimateCreditCost(task);
   db.prepare(`
     UPDATE executions SET status = 'completed', completed_at = datetime('now'),
-      output = ?
+      output = ?, estimated_credits = ?
     WHERE id = ?
-  `).run(result.output.slice(0, 5000), execId);
+  `).run(result.output.slice(0, 5000), creditCost, execId);
 
   log.info(`Task "${task.title}" completed → ${finalStatus} (${durationMin}min)`);
+
+  // --- PM DEBRIEF: analyze what was done, suggest next steps ---
+  // Run async so it doesn't block the scheduler
+  generateDebrief(taskId, task, project, result.output, providerRecord).catch(e => {
+    log.warn(`[PM Debrief] Failed for task ${taskId}: ${e.message}`);
+  });
 
   repoLocks.delete(project.repo_path);
   return {
@@ -212,7 +254,94 @@ function failTask(db, taskId, execId, projectId, error, output = '', durationMin
   db.prepare("UPDATE executions SET status = 'failed', error = ?, output = ?, completed_at = datetime('now') WHERE id = ?")
     .run(error, output || '', execId);
   log.error(`Task ${taskId} failed: ${error}`);
+
+  // Async failure analysis (don't block)
+  generateFailureAnalysis(taskId,
+    db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId),
+    db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId),
+    error, null
+  ).catch(() => {});
+
   return { success: false, taskId, error };
+}
+
+async function generateFailureAnalysis(taskId, task, project, error, providerRecord) {
+  const { spawnSync } = require('child_process');
+  const db = getDb();
+
+  // Check for repeated failures on similar tasks
+  const similarFailures = db.prepare(`
+    SELECT title, execution_log, debrief FROM tasks
+    WHERE project_id = ? AND status = 'failed' AND id != ?
+    ORDER BY completed_at DESC LIMIT 5
+  `).all(task.project_id, taskId);
+
+  const failureContext = similarFailures.length > 0
+    ? `\n\nPrevious failures on this project:\n${similarFailures.map(f => `- "${f.title}": ${f.execution_log?.slice(0, 100)}`).join('\n')}`
+    : '';
+
+  const prompt = `A coding task just FAILED. Analyze why and how to prevent this in the future.
+
+Task: "${task.title}"
+Project: ${project.name}
+Provider: ${providerRecord?.name || 'unknown'}
+Error: ${error.slice(0, 1000)}
+${failureContext}
+
+Respond in JSON:
+{
+  "debrief": "What went wrong in 2-3 sentences. Be specific about the root cause.",
+  "lesson": "A rule that would prevent this in the future (e.g., 'Always check if the database migration exists before running queries')",
+  "retry_suggestion": "Should this be retried? If yes, what should change? If no, why?",
+  "is_recurring": ${similarFailures.length > 0 ? 'true or false — is this the same type of failure as previous ones?' : 'false'}
+}
+
+Output ONLY valid JSON.`;
+
+  try {
+    const result = spawnSync('claude', ['-p', '--output-format', 'text'], {
+      cwd: project.repo_path,
+      input: prompt,
+      encoding: 'utf-8',
+      timeout: 45000,
+    });
+
+    if (result.error || result.status !== 0) return;
+
+    const jsonMatch = result.stdout.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      db.prepare('UPDATE tasks SET debrief = ? WHERE id = ?').run(result.stdout.slice(0, 1000), taskId);
+      return;
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    // Save debrief to the failed task
+    const debrief = [
+      parsed.debrief,
+      parsed.lesson ? `\n**Lesson:** ${parsed.lesson}` : '',
+      parsed.retry_suggestion ? `\n**Retry:** ${parsed.retry_suggestion}` : '',
+      parsed.is_recurring ? '\n**Warning:** This is a recurring failure pattern.' : '',
+    ].join('');
+
+    db.prepare('UPDATE tasks SET debrief = ? WHERE id = ?').run(debrief, taskId);
+
+    // If there's a lesson, add it to project preferences so future tasks avoid it
+    if (parsed.lesson) {
+      const project2 = db.prepare('SELECT preferences FROM projects WHERE id = ?').get(task.project_id);
+      let prefs = [];
+      try { prefs = JSON.parse(project2.preferences || '[]'); } catch {}
+      if (Array.isArray(prefs) && !prefs.includes(parsed.lesson)) {
+        prefs.push(parsed.lesson);
+        db.prepare('UPDATE projects SET preferences = ? WHERE id = ?')
+          .run(JSON.stringify(prefs), task.project_id);
+      }
+    }
+
+    log.info(`[PM Failure] Analyzed failure for "${task.title}": ${parsed.debrief?.slice(0, 100)}`);
+  } catch (e) {
+    log.warn(`[PM Failure] Analysis failed: ${e.message}`);
+  }
 }
 
 /**
@@ -279,3 +408,91 @@ function slugify(text) {
 }
 
 module.exports = { executeTask };
+
+async function generateDebrief(taskId, task, project, output, providerRecord) {
+  const { spawnSync } = require('child_process');
+  const db = getDb();
+
+  const prompt = `You just completed a coding task. Analyze what was done and suggest next steps.
+
+Task: "${task.title}"
+${task.description ? `Description: ${task.description}` : ''}
+Project: ${project.name}
+Provider: ${providerRecord.name}
+
+Output summary (what the agent did):
+${output.slice(0, 3000)}
+
+Respond in this exact JSON format:
+{
+  "debrief": "2-3 sentence summary of what was accomplished, what changed, and any issues noticed",
+  "suggestions": [
+    {"title": "short task title", "description": "why this should be done next", "tier": 1},
+    {"title": "another task", "description": "reason", "tier": 2}
+  ]
+}
+
+Rules for suggestions:
+- Only suggest tasks that logically follow from what was just done
+- Be specific — reference actual files/functions if you can
+- Tier 1 = simple/auto (tests, lint, formatting), Tier 2 = features, Tier 3 = research
+- Max 3 suggestions
+- If nothing needs follow-up, return empty suggestions array
+- Output ONLY valid JSON, nothing else`;
+
+  const result = spawnSync('claude', ['-p', '--output-format', 'text'], {
+    cwd: project.repo_path,
+    input: prompt,
+    encoding: 'utf-8',
+    timeout: 60000,
+    maxBuffer: 1024 * 1024,
+  });
+
+  if (result.error || result.status !== 0) {
+    log.warn(`[PM Debrief] Claude call failed: ${result.error?.message || result.stderr}`);
+    return;
+  }
+
+  const text = result.stdout.trim();
+
+  // Parse JSON from response
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    // If not JSON, use the raw text as debrief
+    db.prepare('UPDATE tasks SET debrief = ? WHERE id = ?').run(text.slice(0, 2000), taskId);
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    // Save debrief to the completed task
+    if (parsed.debrief) {
+      db.prepare('UPDATE tasks SET debrief = ? WHERE id = ?').run(parsed.debrief, taskId);
+    }
+
+    // Create suggested tasks
+    if (parsed.suggestions && Array.isArray(parsed.suggestions)) {
+      const { v4: uuid } = require('uuid');
+      for (const suggestion of parsed.suggestions.slice(0, 3)) {
+        if (!suggestion.title) continue;
+        db.prepare(`
+          INSERT INTO tasks (id, project_id, title, description, task_type, tier, status, priority, parent_task_id)
+          VALUES (?, ?, ?, ?, 'agent', ?, 'suggested', 10, ?)
+        `).run(
+          uuid(),
+          task.project_id,
+          suggestion.title,
+          suggestion.description || null,
+          suggestion.tier || 2,
+          taskId
+        );
+      }
+      log.info(`[PM Debrief] Created ${parsed.suggestions.length} suggested tasks for "${task.title}"`);
+    }
+  } catch (e) {
+    // JSON parse failed — save raw text as debrief
+    db.prepare('UPDATE tasks SET debrief = ? WHERE id = ?').run(text.slice(0, 2000), taskId);
+    log.warn(`[PM Debrief] JSON parse failed: ${e.message}`);
+  }
+}
