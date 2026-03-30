@@ -108,4 +108,46 @@ function pickProvider(tier) {
   return providers[0] || null;
 }
 
-module.exports = { detectProviders, getProviders, pickProvider, KNOWN_PROVIDERS };
+/**
+ * Pick the best provider for a task, considering complexity, capabilities, and rate limits.
+ * @param {object} task - { tier, model, title, provider }
+ * @returns {object|null} provider record from DB
+ */
+function pickBestProvider(task) {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  // If task explicitly requests a provider, try that first
+  if (task.provider) {
+    const explicit = db.prepare(`
+      SELECT * FROM providers WHERE id = ? AND enabled = 1
+        AND (rate_limited_until IS NULL OR rate_limited_until < ?)
+    `).get(task.provider, now);
+    if (explicit) return explicit;
+  }
+
+  const providers = db.prepare(`
+    SELECT * FROM providers
+    WHERE enabled = 1
+      AND (rate_limited_until IS NULL OR rate_limited_until < ?)
+    ORDER BY priority ASC
+  `).all(now);
+
+  if (!providers.length) return null;
+
+  const tier = task.tier || 2;
+
+  for (const p of providers) {
+    const tiers = (p.use_for_tiers || '1,2,3').split(',').map(Number);
+    if (!tiers.includes(tier)) continue;
+
+    // For complex tasks (opus model), prefer claude_code
+    if (task.model === 'opus' && p.id === 'claude_code') return p;
+
+    return p;
+  }
+
+  return providers[0] || null;
+}
+
+module.exports = { detectProviders, getProviders, pickProvider, pickBestProvider, KNOWN_PROVIDERS };

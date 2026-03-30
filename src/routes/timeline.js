@@ -220,7 +220,24 @@ router.get('/project/:id', (req, res) => {
     ORDER BY started_at DESC LIMIT 5
   `).all(projectId);
 
-  res.json({ project, humanTasks, completed, inProgress, planned, failed });
+  // Enrich tasks with actual cost from executions
+  const costStmt = db.prepare(`
+    SELECT COALESCE(SUM(actual_cost_usd), 0) as actual_cost_usd
+    FROM executions WHERE task_id = ? AND actual_cost_usd IS NOT NULL
+  `);
+  const enrichWithCost = (tasks) => tasks.map(t => {
+    const cost = costStmt.get(t.id);
+    return { ...t, actual_cost_usd: cost?.actual_cost_usd || null };
+  });
+
+  res.json({
+    project,
+    humanTasks: enrichWithCost(humanTasks),
+    completed: enrichWithCost(completed),
+    inProgress,
+    planned,
+    failed,
+  });
 });
 
 module.exports = router;

@@ -159,6 +159,73 @@ function migrate() {
     database.exec("ALTER TABLE projects ADD COLUMN auto_approve_tiers TEXT DEFAULT '1'");
   }
 
+  // Migration: add session_id column to tasks if missing
+  const taskCols = database.prepare("PRAGMA table_info(tasks)").all();
+  if (!taskCols.find(c => c.name === 'session_id')) {
+    database.exec('ALTER TABLE tasks ADD COLUMN session_id TEXT');
+  }
+
+  // Migration: add actual_cost_usd column to executions if missing
+  const execCols2 = database.prepare("PRAGMA table_info(executions)").all();
+  if (!execCols2.find(c => c.name === 'actual_cost_usd')) {
+    database.exec('ALTER TABLE executions ADD COLUMN actual_cost_usd REAL');
+  }
+
+  // Migration: task_comments table
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS task_comments (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES tasks(id),
+      author TEXT NOT NULL DEFAULT 'user',
+      content TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Migration: project_memory table — per-project learnings
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS project_memory (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      category TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source_task_id TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Migration: system_memory table — cross-project DevShift learnings
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS system_memory (
+      id TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source_project_id TEXT,
+      source_task_id TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Migration: add plan_status column to tasks for PM review gate
+  const taskCols2 = database.prepare("PRAGMA table_info(tasks)").all();
+  if (!taskCols2.find(c => c.name === 'plan_status')) {
+    database.exec("ALTER TABLE tasks ADD COLUMN plan_status TEXT DEFAULT 'auto'");
+  }
+
+  // Migration: add memory limit columns to schedule
+  const schCols2 = database.prepare("PRAGMA table_info(schedule)").all();
+  if (!schCols2.find(c => c.name === 'memory_per_category')) {
+    database.exec("ALTER TABLE schedule ADD COLUMN memory_per_category INTEGER DEFAULT 20");
+  }
+  if (!schCols2.find(c => c.name === 'memory_system_max')) {
+    database.exec("ALTER TABLE schedule ADD COLUMN memory_system_max INTEGER DEFAULT 30");
+  }
+  if (!schCols2.find(c => c.name === 'log_retention_days')) {
+    database.exec("ALTER TABLE schedule ADD COLUMN log_retention_days INTEGER DEFAULT 7");
+  }
+
   log.info('Database migration complete');
 }
 

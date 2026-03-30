@@ -249,6 +249,22 @@ async function handleCallback(chatId, data, queryId) {
   const db = getDb();
 
   if (action === 'approve') {
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+    if (task) {
+      const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
+      if (project && task.branch_name) {
+        const gitUtils = require('../utils/git');
+        try {
+          const defaultBranch = gitUtils.getDefaultBranch(project.repo_path);
+          gitUtils.checkout(project.repo_path, defaultBranch);
+          gitUtils.mergeBranch(project.repo_path, task.branch_name);
+          gitUtils.deleteBranch(project.repo_path, task.branch_name);
+        } catch (e) {
+          log.error('Git merge error during approve:', e.message);
+          bot.sendMessage(chatId, `Warning: Could not merge branch — ${e.message}`);
+        }
+      }
+    }
     db.prepare("UPDATE tasks SET status = 'done' WHERE id = ?").run(taskId);
     bot.answerCallbackQuery(queryId, { text: 'Approved!' });
     bot.sendMessage(chatId, '✓ Task approved and marked as done.');

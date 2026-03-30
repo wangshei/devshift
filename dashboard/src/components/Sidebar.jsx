@@ -169,8 +169,21 @@ export default function Sidebar() {
         )}
       </div>
 
-      {/* Settings */}
-      <div className="px-3 pb-4 border-t border-border pt-3">
+      {/* Bottom nav: Timeline + Settings */}
+      <div className="px-3 pb-4 border-t border-border pt-3 flex flex-col gap-0.5">
+        <button
+          onClick={() => navigate('/timeline')}
+          className={`flex items-center gap-2.5 px-2 py-1.5 rounded-md w-full transition-colors ${
+            location.pathname === '/timeline'
+              ? 'text-accent bg-accent/10'
+              : 'text-vmuted hover:text-muted hover:bg-hover'
+          }`}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-4 h-4 shrink-0">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span className="text-xs">Timeline</span>
+        </button>
         <button
           onClick={() => navigate('/settings')}
           className={`flex items-center gap-2.5 px-2 py-1.5 rounded-md w-full transition-colors ${

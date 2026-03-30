@@ -15,6 +15,9 @@ export default function ProviderStatus({ provider, onToggle }) {
         {provider.plan_tier && (
           <span className="text-xs text-muted ml-2">({provider.plan_tier})</span>
         )}
+        {provider.id === 'cursor' && (
+          <span className="text-xs text-error ml-2">(not yet supported)</span>
+        )}
         {isRateLimited && (
           <span className="text-xs text-error ml-2">Rate limited</span>
         )}

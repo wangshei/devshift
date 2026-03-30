@@ -27,6 +27,25 @@ app.use('/api/agent', require('./routes/agent'));
 app.use('/api/timeline', require('./routes/timeline'));
 app.use('/api/changelog', require('./routes/changelog'));
 app.use('/api/setup', require('./routes/setup'));
+app.use('/api/comments', require('./routes/comments'));
+app.use('/api/memory', require('./routes/memory'));
+
+// Memory stats endpoint
+app.get('/api/memory/stats', (req, res) => {
+  const db = require('./db').getDb();
+  const projectCount = db.prepare('SELECT COUNT(*) as c FROM project_memory').get().c;
+  const systemCount = db.prepare('SELECT COUNT(*) as c FROM system_memory').get().c;
+  const schedule = db.prepare('SELECT memory_per_category, memory_system_max, log_retention_days FROM schedule WHERE id = 1').get();
+  res.json({
+    projectMemories: projectCount,
+    systemMemories: systemCount,
+    limits: {
+      perCategory: schedule?.memory_per_category || 20,
+      systemMax: schedule?.memory_system_max || 30,
+      logRetentionDays: schedule?.log_retention_days || 7,
+    }
+  });
+});
 
 // Credit usage endpoint
 app.get('/api/credits', (req, res) => {
@@ -64,12 +83,19 @@ migrate();
 const { detectProviders } = require('./providers');
 detectProviders();
 
+const { cleanupOldLogs } = require('./utils/cleanup');
+const cron = require('node-cron');
+
 app.listen(PORT, () => {
   log.info(`DevShift server running on http://localhost:${PORT}`);
   // Start the scheduler
   scheduler.start();
   // Start Telegram bot (if configured)
   telegram.start();
+  // Run cleanup on startup
+  cleanupOldLogs();
+  // Run cleanup daily at 3am
+  cron.schedule('0 3 * * *', () => cleanupOldLogs());
 });
 
 module.exports = app;

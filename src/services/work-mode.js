@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const { v4: uuid } = require('uuid');
 const { execSync } = require('child_process');
 const { getDb } = require('../db');
@@ -14,14 +16,81 @@ const log = require('../utils/logger');
  * 4. Queues for execution
  */
 
+/** Vague words that need more specifics to be actionable */
+const VAGUE_WORDS = /\b(fix|update|change|improve|handle|address|tweak|adjust|do|make)\b/i;
+
+/** Pattern to detect file path references */
+const FILE_PATH_PATTERN = /(?:^|\s|\/)([\w.-]+\/[\w.-]+(?:\.[\w]+)?)/;
+
 /**
- * Check if a task title is vague/short and needs improvement.
+ * Check if a task title/description is vague and needs improvement.
+ * @param {string} title
+ * @param {string} [description]
+ * @param {{ tier?: number, parent_task_id?: string|null, subtaskCount?: number }} [meta]
+ * @returns {boolean}
  */
-function needsImprovement(title) {
-  // Short tasks, texted tasks, or tasks without clear action verbs
+function needsImprovement(title, description, meta) {
+  // Never re-decompose tasks that already have subtasks
+  if (meta && meta.subtaskCount && meta.subtaskCount > 0) return false;
+
+  // Never improve parent tasks that were already decomposed
+  if (meta && meta.parent_task_id) return false;
+
+  // Tier 3 (research) tasks are intentionally open-ended
+  if (meta && meta.tier === 3) return false;
+
+  // Detailed descriptions with file paths are already actionable
+  if (description && description.length > 200 && FILE_PATH_PATTERN.test(description)) return false;
+
+  // --- Triggers ---
+
+  // Short titles
   if (title.length < 30) return true;
-  if (!/\b(add|fix|update|create|implement|remove|refactor|test|write|build|improve|change|move|rename)\b/i.test(title)) return true;
+
+  // No action verb at all
+  if (!/\b(add|fix|update|create|implement|remove|refactor|test|write|build|improve|change|move|rename|migrate|extract|replace|delete|configure|set up|integrate)\b/i.test(title)) return true;
+
+  // Vague action words without specifics (no file path in title or description)
+  if (VAGUE_WORDS.test(title)) {
+    const combinedText = `${title} ${description || ''}`;
+    if (!FILE_PATH_PATTERN.test(combinedText)) return true;
+  }
+
+  // Empty or very short description
+  if (!description || description.length < 50) return true;
+
+  // No file paths mentioned anywhere
+  const combinedText = `${title} ${description || ''}`;
+  if (!FILE_PATH_PATTERN.test(combinedText)) return true;
+
   return false;
+}
+
+/**
+ * Gather project context for the PM expansion prompt.
+ * @param {{ repo_path: string }} project
+ * @returns {{ claudeMd: string, directoryTree: string, packageScripts: Record<string, string> }}
+ */
+function gatherProjectContext(project) {
+  const result = { claudeMd: '', directoryTree: '', packageScripts: {} };
+
+  try {
+    result.claudeMd = fs.readFileSync(path.join(project.repo_path, 'CLAUDE.md'), 'utf-8');
+  } catch { /* no CLAUDE.md */ }
+
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(project.repo_path, 'package.json'), 'utf-8'));
+    result.packageScripts = pkg.scripts || {};
+  } catch { /* no package.json */ }
+
+  try {
+    result.directoryTree = execSync(
+      "find . -type f -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/dist/*' -not -path '*/.next/*' | head -80",
+      { cwd: project.repo_path, encoding: 'utf-8', timeout: 5000 }
+    ).trim();
+  } catch { /* fallback */ }
+
+  return result;
 }
 
 /**
@@ -37,32 +106,59 @@ async function improvePrompt(taskId) {
 
   log.info(`[WorkMode] Improving prompt for: "${task.title}"`);
 
-  const prompt = `You are a senior developer planning work for a coding agent.
+  const ctx = gatherProjectContext(project);
 
-The user sent this task (possibly from their phone, so it may be brief):
-"${task.title}"${task.description ? `\nExtra context: "${task.description}"` : ''}
+  // Load project memories for PM context
+  let memoryContext = '';
+  try {
+    const { getProjectMemories, getSystemMemories, formatMemoriesForPrompt } = require('./memory');
+    const projMem = getProjectMemories(project.id);
+    const sysMem = getSystemMemories();
+    memoryContext = formatMemoriesForPrompt(projMem, 'Project Learnings') +
+                    formatMemoriesForPrompt(sysMem.slice(0, 10), 'System-wide Lessons');
+  } catch { /* memory not available */ }
 
-Project: ${project.name}
-${project.context ? `Context: ${project.context}` : ''}
+  const prompt = `You are a senior engineering PM decomposing a task for an AI coding agent.
 
-Your job:
-1. Expand this into a clear, detailed task description that a coding agent can execute
-2. If this is a complex task, break it into 2-5 smaller subtasks
-3. For each task/subtask, specify:
-   - A clear title (imperative: "Add...", "Fix...", "Update...")
-   - Detailed description with acceptance criteria
-   - Whether it needs human review (design decisions, credentials) or can be auto-completed
+## Task to decompose
+Title: ${task.title}
+Description: ${task.description || 'None'}
 
-Return JSON:
+## Project: ${project.name}
+Path: ${project.repo_path}
+
+## Project Rules
+${ctx.claudeMd || 'None'}
+
+## Directory Structure
+${ctx.directoryTree || 'Not available'}
+
+## Available Scripts
+${JSON.stringify(ctx.packageScripts)}
+${memoryContext}
+
+## Instructions
+Break this task into 2-5 focused, actionable subtasks. Each subtask will be executed independently by an AI coding agent that has full access to the codebase.
+
+For each subtask, provide:
+- A clear, specific title that includes the target file(s) or component(s)
+- A detailed description with:
+  - What to change and where (specific file paths)
+  - Acceptance criteria (what "done" looks like)
+  - How to verify (which test/build command to run)
+- task_type: "agent" (AI does it) or "human" (needs human judgment)
+- tier: 1 (quick wins: tests, lint, docs, refactoring), 2 (features needing review), or 3 (research/analysis)
+
+Return JSON only:
 {
-  "improved_title": "Clear, specific title",
-  "improved_description": "Detailed description with acceptance criteria",
+  "improved_title": "clearer version of the original title",
+  "improved_description": "expanded description with context",
   "subtasks": [
     {
-      "title": "Subtask title",
-      "description": "What to do",
-      "task_type": "agent" or "human",
-      "tier": 1 or 2 or 3
+      "title": "specific title mentioning files/components",
+      "description": "## What to change\\n...\\n\\n## Files to modify\\n- path/to/file.js\\n\\n## Acceptance criteria\\n- [ ] ...\\n\\n## Verification\\nRun \`npm test\` to confirm",
+      "task_type": "agent",
+      "tier": 1
     }
   ]
 }
@@ -72,7 +168,7 @@ Return ONLY the JSON, no other text.`;
 
   try {
     // Use claude to improve the prompt
-    const output = execSync(`claude -p ${JSON.stringify(prompt)} --output-format text`, {
+    const output = execSync(`claude -p ${JSON.stringify(prompt)} --output-format text --model sonnet`, {
       cwd: project.repo_path,
       encoding: 'utf-8',
       timeout: 60000,
@@ -106,8 +202,15 @@ Return ONLY the JSON, no other text.`;
       }
 
       // Mark original as a parent/container
-      db.prepare("UPDATE tasks SET status = 'done', result_summary = ? WHERE id = ?")
-        .run(`Decomposed into ${result.subtasks.length} subtasks`, taskId);
+      const hasTier2Subtasks = result.subtasks.some(s => (s.tier ?? 2) >= 2);
+      if (hasTier2Subtasks) {
+        db.prepare("UPDATE tasks SET status = 'needs_review', plan_status = 'pending_review', result_summary = ? WHERE id = ?")
+          .run(`Plan: ${result.subtasks.length} subtasks awaiting approval`, taskId);
+        // Keep subtasks in backlog until parent plan is approved
+      } else {
+        db.prepare("UPDATE tasks SET status = 'done', plan_status = 'auto', result_summary = ? WHERE id = ?")
+          .run(`Decomposed into ${result.subtasks.length} subtasks`, taskId);
+      }
 
       log.info(`[WorkMode] Decomposed "${task.title}" into ${result.subtasks.length} subtasks`);
     }
@@ -155,7 +258,18 @@ async function processBacklog() {
 
   let improved = 0;
   for (const task of tasks) {
-    if (needsImprovement(task.title)) {
+    // Count existing subtasks for this task
+    const subtaskCount = db.prepare(
+      'SELECT COUNT(*) as cnt FROM tasks WHERE parent_task_id = ?'
+    ).get(task.id)?.cnt || 0;
+
+    const meta = {
+      tier: task.tier,
+      parent_task_id: task.parent_task_id,
+      subtaskCount,
+    };
+
+    if (needsImprovement(task.title, task.description, meta)) {
       try {
         const result = await improvePrompt(task.id);
         if (result.improved) improved++;

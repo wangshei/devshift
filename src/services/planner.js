@@ -45,6 +45,13 @@ function getCreditUsage() {
   const reserved = budget * (reservePercent / 100);
   const available = Math.max(0, budget - agentUsed - reserved);
 
+  // Get real USD costs from provider responses
+  const realCosts = db.prepare(`
+    SELECT COALESCE(SUM(actual_cost_usd), 0) as total_usd,
+           COUNT(*) as count
+    FROM executions WHERE started_at > ? AND actual_cost_usd IS NOT NULL
+  `).get(weekAgo);
+
   return {
     budget,
     agentUsed,
@@ -53,6 +60,8 @@ function getCreditUsage() {
     usedPercent: Math.round((agentUsed / budget) * 100),
     reservedPercent: reservePercent,
     availablePercent: Math.round((available / budget) * 100),
+    realCostUsd: realCosts.total_usd,
+    executionCount: realCosts.count,
   };
 }
 

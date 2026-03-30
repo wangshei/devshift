@@ -14,6 +14,17 @@ function isOffHours() {
   const db = getDb();
   const schedule = db.prepare('SELECT * FROM schedule WHERE id = 1').get();
 
+  // Auto-reset vacation mode if vacation_until has passed
+  if (schedule.vacation_mode && schedule.vacation_until) {
+    const now = new Date();
+    const until = new Date(schedule.vacation_until);
+    if (now > until) {
+      db.prepare("UPDATE schedule SET vacation_mode = 0, vacation_until = NULL WHERE id = 1").run();
+      schedule.vacation_mode = 0;
+      log.info('Vacation mode auto-reset (vacation_until passed)');
+    }
+  }
+
   // Always-on mode: agent runs whenever there are tasks
   if (schedule.always_on) return true;
 
@@ -167,7 +178,7 @@ async function tick() {
 
     while (task && tasksExecutedThisTick < 3) { // max 3 per tick to not hog
       const workMode = require('./work-mode');
-      if (workMode.needsImprovement(task.title)) {
+      if (workMode.needsImprovement(task.title, task.description, { tier: task.tier, parent_task_id: task.parent_task_id })) {
         try {
           const result = await workMode.improvePrompt(task.id);
           if (result.improved && result.subtaskCount > 0) {
@@ -199,6 +210,37 @@ async function tick() {
       if (credits.availablePercent > 10) {
         await runSmartModeForAllProjects();
       }
+    }
+
+    // --- MEMORY CONSOLIDATION: periodically synthesize learnings ---
+    if (!task) {
+      try {
+        const { consolidateMemories } = require('./memory');
+        const db = getDb();
+        const projects = db.prepare("SELECT * FROM projects WHERE paused = 0").all();
+        // Consolidate one project per tick, round-robin
+        const tickCount = Date.now(); // rough counter
+        const idx = Math.floor(tickCount / 60000) % Math.max(projects.length, 1);
+        if (projects[idx]) {
+          // Only consolidate every ~6 hours (360 ticks)
+          const lastConsolidation = db.prepare(
+            "SELECT MAX(updated_at) as last FROM project_memory WHERE project_id = ? AND category = 'patterns'"
+          ).get(projects[idx].id);
+          const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+          if (!lastConsolidation?.last || lastConsolidation.last < sixHoursAgo) {
+            await consolidateMemories(projects[idx].id);
+          }
+        }
+      } catch (e) {
+        log.debug(`[Memory] Consolidation tick failed: ${e.message}`);
+      }
+    }
+    // --- GIT WATCH: detect human commits to keep project memory up to date ---
+    try {
+      const { detectHumanCommits } = require('./git-watch');
+      detectHumanCommits();
+    } catch (e) {
+      log.debug(`[GitWatch] ${e.message}`);
     }
   } catch (e) {
     log.error(`Scheduler error: ${e.message}`);

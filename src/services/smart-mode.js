@@ -1,6 +1,5 @@
 const { v4: uuid } = require('uuid');
 const { getDb } = require('../db');
-const { executeTask } = require('./executor');
 const log = require('../utils/logger');
 
 /**
@@ -90,7 +89,32 @@ async function analyzeProject(projectId, analysisType = 'code_quality') {
 
   log.info(`[SmartMode] Running ${analysisType} analysis on "${project.name}"`);
 
-  // Create a virtual analysis task
+  // Gather project context for a richer analysis
+  let contextInfo = '';
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const { execSync } = require('child_process');
+
+    // Directory tree
+    try {
+      const tree = execSync(
+        "find . -type f -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/dist/*' | head -60",
+        { cwd: project.repo_path, encoding: 'utf-8', timeout: 5000 }
+      ).trim();
+      contextInfo += `\n\nProject files:\n${tree}`;
+    } catch {}
+
+    // CLAUDE.md
+    try {
+      const claudeMd = fs.readFileSync(path.join(project.repo_path, 'CLAUDE.md'), 'utf-8');
+      contextInfo += `\n\nProject rules (CLAUDE.md):\n${claudeMd}`;
+    } catch {}
+  } catch {}
+
+  const fullPrompt = `You are analyzing the project "${project.name}" at ${project.repo_path}.${contextInfo}\n\n${prompt}`;
+
+  // Create a record for tracking (tier 3, lightweight)
   const analysisTaskId = uuid();
   db.prepare(`
     INSERT INTO tasks (id, project_id, title, description, task_type, tier, status, model)
@@ -100,19 +124,31 @@ async function analyzeProject(projectId, analysisType = 'code_quality') {
     prompt);
 
   try {
-    const result = await executeTask(analysisTaskId);
+    // Lightweight call — sonnet, no permissions needed, just thinking
+    const { execSync } = require('child_process');
+    const output = execSync(
+      `claude -p ${JSON.stringify(fullPrompt)} --output-format text --model sonnet`,
+      { cwd: project.repo_path, encoding: 'utf-8', timeout: 120000 }
+    );
 
-    if (result.success && result.output) {
-      const tasks = parseAnalysisOutput(result.output);
-      if (tasks.length > 0) {
-        const created = createImprovementTasks(projectId, tasks, analysisType);
-        log.info(`[SmartMode] Generated ${created} improvement tasks for "${project.name}"`);
-        return { success: true, tasksCreated: created, analysis: analysisType };
-      }
+    const tasks = parseAnalysisOutput(output);
+
+    // Update the analysis task as done with results
+    db.prepare(`
+      UPDATE tasks SET status = 'done', result_summary = ?, completed_at = datetime('now')
+      WHERE id = ?
+    `).run(output.slice(0, 2000), analysisTaskId);
+
+    if (tasks.length > 0) {
+      const created = createImprovementTasks(projectId, tasks, analysisType);
+      log.info(`[SmartMode] Generated ${created} improvement tasks for "${project.name}"`);
+      return { success: true, tasksCreated: created, analysis: analysisType };
     }
 
     return { success: false, error: 'No improvements found' };
   } catch (e) {
+    db.prepare("UPDATE tasks SET status = 'failed', execution_log = ? WHERE id = ?")
+      .run(e.message, analysisTaskId);
     log.error(`[SmartMode] Analysis failed: ${e.message}`);
     return { success: false, error: e.message };
   }

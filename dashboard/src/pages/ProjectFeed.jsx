@@ -2,7 +2,53 @@ import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useApi, api } from '../hooks/useApi';
 import HumanTaskCard from '../components/HumanTaskCard';
+import SplitDiffViewer from '../components/SplitDiffViewer';
 import TaskInput from '../components/TaskInput';
+
+function CommentThread({ taskId }) {
+  const { data: comments, refetch } = useApi(`/comments/${taskId}/comments`, []);
+  const [text, setText] = useState('');
+  const [posting, setPosting] = useState(false);
+
+  const handlePost = async () => {
+    if (!text.trim()) return;
+    setPosting(true);
+    try {
+      await api(`/comments/${taskId}/comments`, { method: 'POST', body: { content: text } });
+      setText('');
+      refetch();
+    } catch {}
+    finally { setPosting(false); }
+  };
+
+  return (
+    <div className="space-y-2 pt-2 border-t border-border">
+      {comments?.length > 0 && (
+        <div className="space-y-1.5">
+          {comments.map(c => (
+            <div key={c.id} className="text-xs text-muted">
+              <span className="text-vmuted font-mono">{c.author}</span>
+              {' '}{c.content}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <input
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handlePost()}
+          placeholder="Add feedback for the agent..."
+          className="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent"
+        />
+        <button onClick={handlePost} disabled={posting || !text.trim()}
+          className="px-2 py-1 text-xs text-accent hover:text-text disabled:opacity-40 transition-colors">
+          Send
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function formatTime(ts) {
   if (!ts) return null;
@@ -49,6 +95,28 @@ function LiveLog({ taskId }) {
   );
 }
 
+/** Try to parse result_summary as a JSON array of generated tasks */
+function parseGeneratedTasks(text) {
+  if (!text) return null;
+  let s = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+  try {
+    const parsed = JSON.parse(s.startsWith('[') ? s : s.match(/\[[\s\S]*\]/)?.[0] || '');
+    if (Array.isArray(parsed) && parsed[0]?.title) return parsed;
+  } catch { /* not JSON */ }
+  return null;
+}
+
+/** Format result_summary for display — full text, not truncated */
+function formatResultSummary(text) {
+  if (!text) return null;
+  let s = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+  try {
+    const parsed = JSON.parse(s.startsWith('[') ? s : s.match(/\[[\s\S]*\]/)?.[0] || '');
+    if (Array.isArray(parsed) && parsed[0]?.title) return null;
+  } catch { /* not JSON */ }
+  return s;
+}
+
 /** Expandable completed/in-progress task card */
 function TaskCard({ task, onAction }) {
   const [expanded, setExpanded] = useState(false);
@@ -64,6 +132,8 @@ function TaskCard({ task, onAction }) {
   const isReview = task.status === 'needs_review' && task.branch_name;
   const isInProgress = task.status === 'in_progress';
   const isDone = task.status === 'done';
+  const isAnalysis = task.tier === 3 || task.title?.startsWith('Smart Mode:');
+  const isAnalysisReview = isAnalysis && task.status === 'needs_review';
 
   const handleShowDiff = async () => {
     if (diff) { setShowDiff(!showDiff); return; }
@@ -95,8 +165,29 @@ function TaskCard({ task, onAction }) {
     finally { setActing(false); }
   };
 
+  const handleDismiss = async () => {
+    setActing(true);
+    try {
+      await api(`/tasks/${task.id}/dismiss`, { method: 'POST' });
+      onAction?.();
+    } catch { /* ignore */ }
+    finally { setActing(false); }
+  };
+
+  const handleTakeover = async () => {
+    try {
+      const result = await api(`/tasks/${task.id}/takeover`, { method: 'POST' });
+      if (result.error) {
+        alert(result.error);
+      }
+    } catch (e) {
+      alert('Could not open terminal: ' + e.message);
+    }
+  };
+
   return (
     <div className={`bg-card border rounded-lg transition-colors ${
+      isAnalysisReview ? 'border-research/30' :
       isReview ? 'border-warning/30' :
       isInProgress ? 'border-accent/20' :
       'border-border'
@@ -106,9 +197,14 @@ function TaskCard({ task, onAction }) {
         className={`flex items-start gap-3 px-4 py-3 ${isDone || isReview ? 'cursor-pointer' : ''}`}
         onClick={() => (isDone || isReview) && setExpanded(!expanded)}
       >
-        <span className={`mt-0.5 text-sm shrink-0 ${s.color}`}>{s.icon}</span>
+        <span className={`mt-0.5 text-sm shrink-0 ${isAnalysisReview ? 'text-research' : s.color}`}>
+          {isAnalysisReview ? '\u25C6' : s.icon}
+        </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
+            {isAnalysisReview && (
+              <span className="text-[10px] font-mono uppercase text-research">Analysis</span>
+            )}
             <span className="text-sm text-text">{task.title}</span>
             {isInProgress && (
               <span className="text-[10px] text-accent font-mono animate-pulse">working...</span>
@@ -124,6 +220,9 @@ function TaskCard({ task, onAction }) {
           {timeStr && <span className="text-[10px] font-mono text-vmuted">{timeStr}</span>}
           {task.actual_minutes != null && (
             <span className="text-[10px] font-mono text-vmuted">{task.actual_minutes}m</span>
+          )}
+          {task.actual_cost_usd != null && task.actual_cost_usd > 0 && (
+            <span className="text-[10px] font-mono text-vmuted">${task.actual_cost_usd.toFixed(2)}</span>
           )}
           {task.tier && (
             <span className={`text-[10px] font-mono ${task.tier === 3 ? 'text-research' : 'text-vmuted'}`}>
@@ -147,74 +246,119 @@ function TaskCard({ task, onAction }) {
       {/* Expanded details */}
       {expanded && (
         <div className="border-t border-border px-4 py-3 space-y-2">
-          {cleanSummary(task.result_summary) && (
-            <p className="text-xs text-muted leading-relaxed">{cleanSummary(task.result_summary)}</p>
-          )}
-          {cleanSummary(task.review_instructions) && (
-            <p className="text-xs text-muted italic leading-relaxed">{cleanSummary(task.review_instructions)}</p>
-          )}
-          {task.provider && (
-            <p className="text-[10px] font-mono text-vmuted">via {task.provider}</p>
-          )}
-          {isDone && (
-            <div>
-              <button
-                onClick={() => setShowOutput(!showOutput)}
-                className="text-[10px] text-vmuted hover:text-muted font-mono transition-colors"
-              >
-                {showOutput ? 'Hide output' : 'View output'}
-              </button>
-              {showOutput && <LiveLog taskId={task.id} />}
-            </div>
-          )}
-
-          {/* Review actions */}
-          {isReview && (
-            <div className="flex items-center gap-2 pt-2 border-t border-border">
-              <button onClick={handleShowDiff} disabled={loadingDiff}
-                className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
-                {loadingDiff ? 'Loading...' : showDiff ? 'Hide diff' : 'View diff'}
-              </button>
-              <div className="flex-1" />
-              {task.pr_url && (
-                <a href={task.pr_url} target="_blank" rel="noopener noreferrer"
-                  className="text-[10px] text-accent hover:underline shrink-0">
-                  PR #{task.pr_number}
-                </a>
+          {/* Analysis tasks: show results prominently */}
+          {isAnalysisReview ? (
+            <>
+              {formatResultSummary(task.result_summary) && (
+                <div className="p-3 bg-bg rounded-lg border border-border">
+                  <p className="text-xs text-muted leading-relaxed whitespace-pre-wrap">
+                    {formatResultSummary(task.result_summary)}
+                  </p>
+                </div>
               )}
-              <button onClick={handleReject} disabled={acting}
-                className="px-3 py-1.5 text-xs text-error/70 hover:text-error border border-error/20 rounded-lg hover:bg-error/10 transition-colors">
-                Reject
-              </button>
-              <button onClick={handleApprove} disabled={acting}
-                className="px-3 py-1.5 text-xs bg-success text-white rounded-lg hover:bg-success/80 disabled:opacity-50 transition-colors font-medium">
-                {acting ? 'Merging...' : 'Approve & Merge'}
-              </button>
-            </div>
+              {parseGeneratedTasks(task.result_summary) && (
+                <div className="p-3 bg-bg rounded-lg border border-border">
+                  <p className="text-[10px] font-mono text-research mb-1.5">
+                    Generated {parseGeneratedTasks(task.result_summary).length} task{parseGeneratedTasks(task.result_summary).length !== 1 ? 's' : ''}
+                  </p>
+                  <ul className="space-y-1">
+                    {parseGeneratedTasks(task.result_summary).map((t, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-xs text-muted">
+                        <span className="text-vmuted shrink-0">{'\u25CB'}</span>
+                        <span>{t.title}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {cleanSummary(task.review_instructions) && (
+                <p className="text-xs text-muted italic leading-relaxed">{cleanSummary(task.review_instructions)}</p>
+              )}
+              {task.provider && (
+                <p className="text-[10px] font-mono text-vmuted">via {task.provider}</p>
+              )}
+              <div className="flex items-center gap-2 pt-2 border-t border-border">
+                {task.branch_name && (
+                  <button onClick={handleShowDiff} disabled={loadingDiff}
+                    className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
+                    {loadingDiff ? 'Loading...' : showDiff ? 'Hide changes' : 'View changes'}
+                  </button>
+                )}
+                <button onClick={handleTakeover}
+                  className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors"
+                  title="Open this session in Terminal to continue manually">
+                  Take over
+                </button>
+                <div className="flex-1" />
+                <button onClick={handleDismiss} disabled={acting}
+                  className="px-3 py-1.5 text-xs bg-research/90 text-white rounded-lg hover:bg-research/70 disabled:opacity-50 transition-colors font-medium">
+                  {acting ? 'Dismissing...' : 'Dismiss'}
+                </button>
+              </div>
+              <CommentThread taskId={task.id} />
+            </>
+          ) : (
+            <>
+              {cleanSummary(task.result_summary) && (
+                <p className="text-xs text-muted leading-relaxed">{cleanSummary(task.result_summary)}</p>
+              )}
+              {cleanSummary(task.review_instructions) && (
+                <p className="text-xs text-muted italic leading-relaxed">{cleanSummary(task.review_instructions)}</p>
+              )}
+              {task.provider && (
+                <p className="text-[10px] font-mono text-vmuted">via {task.provider}</p>
+              )}
+              {isDone && (
+                <div>
+                  <button
+                    onClick={() => setShowOutput(!showOutput)}
+                    className="text-[10px] text-vmuted hover:text-muted font-mono transition-colors"
+                  >
+                    {showOutput ? 'Hide output' : 'View output'}
+                  </button>
+                  {showOutput && <LiveLog taskId={task.id} />}
+                </div>
+              )}
+
+              {/* Review actions for code changes (non-analysis) */}
+              {isReview && (
+                <div className="flex items-center gap-2 pt-2 border-t border-border">
+                  <button onClick={handleShowDiff} disabled={loadingDiff}
+                    className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
+                    {loadingDiff ? 'Loading...' : showDiff ? 'Hide diff' : 'View diff'}
+                  </button>
+                  <button onClick={handleTakeover}
+                    className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors"
+                    title="Open this session in Terminal to continue manually">
+                    Take over
+                  </button>
+                  <div className="flex-1" />
+                  {task.pr_url && (
+                    <a href={task.pr_url} target="_blank" rel="noopener noreferrer"
+                      className="text-[10px] text-accent hover:underline shrink-0">
+                      PR #{task.pr_number}
+                    </a>
+                  )}
+                  <button onClick={handleReject} disabled={acting}
+                    className="px-3 py-1.5 text-xs text-error/70 hover:text-error border border-error/20 rounded-lg hover:bg-error/10 transition-colors">
+                    Reject
+                  </button>
+                  <button onClick={handleApprove} disabled={acting}
+                    className="px-3 py-1.5 text-xs bg-success text-white rounded-lg hover:bg-success/80 disabled:opacity-50 transition-colors font-medium">
+                    {acting ? 'Merging...' : 'Approve & Merge'}
+                  </button>
+                </div>
+              )}
+
+              <CommentThread taskId={task.id} />
+            </>
           )}
         </div>
       )}
 
       {/* Diff viewer */}
       {expanded && showDiff && diff && (
-        <div className="border-t border-border">
-          {diff.stat && (
-            <div className="px-4 py-2 bg-bg text-xs font-mono text-muted">{diff.stat}</div>
-          )}
-          {diff.diff ? (
-            <pre className="px-4 py-3 text-[11px] font-mono overflow-x-auto max-h-64 overflow-y-auto leading-relaxed">
-              {diff.diff.split('\n').map((line, i) => (
-                <div key={i} className={
-                  line.startsWith('+') && !line.startsWith('+++') ? 'text-success' :
-                  line.startsWith('-') && !line.startsWith('---') ? 'text-error' :
-                  line.startsWith('@@') ? 'text-accent' : 'text-muted'
-                }>{line}</div>
-              ))}
-            </pre>
-          ) : (
-            <div className="px-4 py-3 text-xs text-vmuted">No changes found on this branch.</div>
-          )}
-        </div>
+        <SplitDiffViewer diff={diff.diff} stat={diff.stat} />
       )}
     </div>
   );
@@ -258,6 +402,17 @@ export default function ProjectFeed() {
   const handleRetryTask = async (taskId) => {
     await api(`/tasks/${taskId}/execute`, { method: 'POST' });
     refetch();
+  };
+
+  const handleTakeoverTask = async (taskId) => {
+    try {
+      const result = await api(`/tasks/${taskId}/takeover`, { method: 'POST' });
+      if (result.error) {
+        alert(result.error);
+      }
+    } catch (e) {
+      alert('Could not open terminal: ' + e.message);
+    }
   };
 
   const handleDelete = async () => {
@@ -347,7 +502,7 @@ export default function ProjectFeed() {
             <div className="flex items-center gap-2 mb-2">
               <div className="h-px flex-1 bg-border" />
               <span className="text-[10px] font-mono text-vmuted">
-                {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} — {completed.length} completed
               </span>
               <div className="h-px flex-1 bg-border" />
             </div>
@@ -404,6 +559,13 @@ export default function ProjectFeed() {
                         <p className="text-xs text-error/70 mt-1 font-mono leading-relaxed line-clamp-2">{t.execution_log}</p>
                       )}
                     </div>
+                    <button
+                      onClick={() => handleTakeoverTask(t.id)}
+                      className="shrink-0 text-xs text-muted hover:text-accent border border-border rounded-md px-2 py-1 transition-colors"
+                      title="Open this session in Terminal to continue manually"
+                    >
+                      Take over
+                    </button>
                     <button
                       onClick={() => handleRetryTask(t.id)}
                       className="shrink-0 text-xs text-muted hover:text-accent border border-border rounded-md px-2 py-1 transition-colors"

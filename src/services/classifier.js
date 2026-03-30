@@ -66,8 +66,17 @@ function classify(title, description) {
     }
   }
 
-  // Default: Tier 2 agent work (feature work, needs review)
-  return { task_type: 'agent', tier: 2, model: 'sonnet' };
+  // Default: Tier 2 agent work — use opus for complex tasks, sonnet for simpler ones
+  const complexPatterns = [
+    /\b(architect|architecture|redesign|rewrite|migration|migrate)\b/i,
+    /\b(implement|build|create)\b.*\b(from scratch|new|system|service|module)\b/i,
+    /\b(full|complete|comprehensive|end.to.end|e2e)\b/i,
+    /\b(integrate|integration|third.party|external)\b/i,
+  ];
+
+  const isComplex = complexPatterns.some(p => p.test(text));
+
+  return { task_type: 'agent', tier: 2, model: isComplex ? 'opus' : 'sonnet' };
 }
 
 module.exports = { classify };

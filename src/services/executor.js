@@ -1,9 +1,14 @@
 const { v4: uuid } = require('uuid');
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const { getDb } = require('../db');
 const { pickProvider } = require('../providers');
 const log = require('../utils/logger');
 const gitUtils = require('../utils/git');
 const github = require('./github');
+
+const MAX_RETRIES = 2;
 
 // Provider class instances (lazy-loaded)
 const providerInstances = {};
@@ -23,6 +28,88 @@ function getProviderInstance(providerId) {
   if (!providers[providerId]) return null;
   providerInstances[providerId] = providers[providerId]();
   return providerInstances[providerId];
+}
+
+/**
+ * Verify task output by running project tests/build.
+ * @param {object} project
+ * @param {object} task
+ * @returns {{ passed: boolean, errors: string }}
+ */
+function verifyChanges(project, task) {
+  const results = [];
+  let passed = true;
+
+  // Read package.json to find scripts
+  let scripts = {};
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(project.repo_path, 'package.json'), 'utf-8'));
+    scripts = pkg.scripts || {};
+  } catch { /* no package.json */ }
+
+  // Determine what to run based on available scripts
+  // For tier 1 lint/format tasks, run lint. For others, run test then build.
+  const checks = [];
+
+  // Always try tests if available (most important signal)
+  if (scripts.test) checks.push({ name: 'test', cmd: 'npm test' });
+  // Build check for tier 2 tasks
+  if (scripts.build && task.tier === 2) checks.push({ name: 'build', cmd: 'npm run build' });
+  // Lint check for lint-related tasks
+  if (scripts.lint && /lint|format|eslint/i.test(task.title)) checks.push({ name: 'lint', cmd: 'npm run lint' });
+
+  for (const check of checks) {
+    try {
+      execSync(check.cmd, {
+        cwd: project.repo_path,
+        encoding: 'utf-8',
+        timeout: 120000, // 2 min per check
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      results.push(`${check.name}: PASSED`);
+    } catch (e) {
+      passed = false;
+      const output = (e.stdout || '') + '\n' + (e.stderr || '');
+      // Truncate to last 3000 chars to fit in prompt
+      results.push(`${check.name}: FAILED\n${output.slice(-3000)}`);
+    }
+  }
+
+  // If no checks available, just check that there are actual file changes
+  if (checks.length === 0) {
+    const hasChanges = gitUtils.hasChanges(project.repo_path);
+    if (!hasChanges && task.tier !== 3) {
+      passed = false;
+      results.push('No file changes were made by the agent.');
+    }
+  }
+
+  return { passed, errors: results.join('\n\n') };
+}
+
+/**
+ * Retry a failed task with error context so the provider can fix its own mistakes.
+ * Uses session resumption when available so the provider has full context of what it already did.
+ * @param {object} task
+ * @param {object} project
+ * @param {object} provider
+ * @param {string} errors
+ * @param {object} options
+ * @param {string|null} sessionId - session ID from previous execution for multi-turn resumption
+ * @returns {Promise<object>}
+ */
+async function retryWithErrors(task, project, provider, errors, options, sessionId) {
+  const retryTask = {
+    ...task,
+    title: `Fix: ${task.title}`,
+    description: `The previous attempt produced errors. Fix them.\n\n## Errors to Fix\n${errors}\n\n## Instructions\n- Read the error output carefully.\n- Fix the issues. Do NOT start over — fix what was already done.\n- Run the failing commands again to verify your fixes work.\n- Keep changes minimal — only fix what's broken.`,
+  };
+
+  // Resume the same session so Claude has full context of what it already did
+  const retryOptions = { ...options };
+  if (sessionId) retryOptions.sessionId = sessionId;
+
+  return provider.execute(retryTask, project, retryOptions);
 }
 
 /**
@@ -96,8 +183,10 @@ async function executeTask(taskId) {
 
   // Execute the task
   const startTime = Date.now();
-  const result = await provider.execute(task, project, { model: task.model, logPath });
-  const durationMin = Math.round((Date.now() - startTime) / 60000);
+  const execOptions = { model: task.model, logPath };
+  const result = await provider.execute(task, project, execOptions);
+  let sessionId = result.sessionId || null;
+  let durationMin = Math.round((Date.now() - startTime) / 60000);
 
   if (!result.success) {
     // Handle rate limiting
@@ -115,6 +204,43 @@ async function executeTask(taskId) {
 
     return failTask(db, taskId, execId, project.id,
       result.error || 'Execution failed', result.output, durationMin, project.repo_path);
+  }
+
+  // Verify and retry loop — skip for tier 3 (research) tasks
+  let verification = { passed: true, errors: '' };
+  let retryCount = 0;
+
+  if (task.tier !== 3) {
+    verification = verifyChanges(project, task);
+
+    while (!verification.passed && retryCount < MAX_RETRIES) {
+      retryCount++;
+      log.info(`[Verify] Task "${task.title}" failed verification (attempt ${retryCount}/${MAX_RETRIES}). Retrying with error context...`);
+
+      const retryResult = await retryWithErrors(task, project, provider, verification.errors, execOptions, sessionId);
+
+      if (!retryResult.success) {
+        log.warn(`[Verify] Retry ${retryCount} provider execution failed: ${retryResult.error}`);
+        break;
+      }
+
+      // Update sessionId from retry (same session, but capture in case it changes)
+      if (retryResult.sessionId) sessionId = retryResult.sessionId;
+
+      // Append retry output to main result
+      result.output += `\n\n--- Retry ${retryCount} ---\n${retryResult.output}`;
+
+      verification = verifyChanges(project, task);
+    }
+
+    // Update total duration across all attempts
+    durationMin = Math.round((Date.now() - startTime) / 60000);
+
+    if (verification.passed && retryCount > 0) {
+      log.info(`[Verify] Task "${task.title}" passed verification after ${retryCount} retry(s)`);
+    } else if (!verification.passed) {
+      log.warn(`[Verify] Task "${task.title}" still failing after ${retryCount} retries. Committing with needs_review.`);
+    }
   }
 
   // Commit any changes
@@ -168,28 +294,52 @@ async function executeTask(taskId) {
     try { gitUtils.checkout(project.repo_path, mainBranch); } catch { /* ignore */ }
   }
 
-  // Determine final status
-  const finalStatus = autoMerge ? 'done' : 'needs_review';
+  // Determine final status — force needs_review if verification failed
+  const verificationFailed = !verification.passed && task.tier !== 3;
+  const finalStatus = verificationFailed ? 'needs_review' : (autoMerge ? 'done' : 'needs_review');
+
+  // Build result summary with verification info
+  let resultSummary = result.output.slice(0, 2000);
+  if (verification.passed && retryCount === 0 && verification.errors) {
+    resultSummary += '\n\nAll checks passed.';
+  } else if (verification.passed && retryCount > 0) {
+    resultSummary += `\n\nAll checks passed after ${retryCount} retry(s).`;
+  }
 
   // Generate review instructions from reviewer agent or fallback
-  const reviewInstructions = autoMerge ? null
+  let reviewInstructions = autoMerge && !verificationFailed ? null
     : reviewResult?.review || `Review the changes in branch "${branchName}". ${prUrl ? `PR: ${prUrl}` : ''}`;
 
-  // Update task
+  // If verification failed, prepend error details so the user knows what's wrong
+  if (verificationFailed) {
+    reviewInstructions = `**Verification failed after ${retryCount} retry(s):**\n\n${verification.errors}\n\n${reviewInstructions || ''}`;
+  }
+
+  // Update task (include session_id for multi-turn resumption / "Take over" button)
   db.prepare(`
     UPDATE tasks SET status = ?, pr_url = ?, pr_number = ?,
       result_summary = ?, review_instructions = ?,
-      actual_minutes = ?, completed_at = datetime('now')
+      actual_minutes = ?, completed_at = datetime('now'),
+      session_id = ?
     WHERE id = ?
   `).run(finalStatus, prUrl, prNumber,
-    result.output.slice(0, 2000), reviewInstructions, durationMin, taskId);
+    resultSummary, reviewInstructions, durationMin, sessionId, taskId);
 
-  // Update execution
+  // Update execution (include actual cost from provider response)
+  const totalCost = (result.cost || 0);
   db.prepare(`
     UPDATE executions SET status = 'completed', completed_at = datetime('now'),
-      output = ?
+      output = ?, actual_cost_usd = ?
     WHERE id = ?
-  `).run(result.output.slice(0, 5000), execId);
+  `).run(result.output.slice(0, 5000), totalCost || null, execId);
+
+  // Learn from this task outcome
+  try {
+    const { learnFromTask } = require('./memory');
+    learnFromTask(taskId);
+  } catch (e) {
+    log.debug(`[Memory] Could not learn from task: ${e.message}`);
+  }
 
   log.info(`Task "${task.title}" completed → ${finalStatus} (${durationMin}min)`);
 
@@ -212,6 +362,31 @@ function failTask(db, taskId, execId, projectId, error, output = '', durationMin
   db.prepare("UPDATE executions SET status = 'failed', error = ?, output = ?, completed_at = datetime('now') WHERE id = ?")
     .run(error, output || '', execId);
   log.error(`Task ${taskId} failed: ${error}`);
+
+  // Learn from failure
+  try {
+    const { learnFromTask } = require('./memory');
+    learnFromTask(taskId);
+  } catch {}
+
+  // Auto-retry: re-queue if this is the first failure (not a rate limit, not already retried)
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+  if (task && !error.includes('rate_limited')) {
+    // Count how many times this task has been executed
+    const execCount = db.prepare(
+      'SELECT COUNT(*) as c FROM executions WHERE task_id = ?'
+    ).get(taskId);
+
+    if (execCount.c <= 1) {
+      // First failure — re-queue with updated description noting the failure
+      const retryNote = `\n\n---\n**Previous attempt failed:** ${error.slice(0, 500)}\nThe system has learned from this failure. Try a different approach.`;
+      db.prepare(
+        "UPDATE tasks SET status = 'queued', description = COALESCE(description, '') || ? WHERE id = ?"
+      ).run(retryNote, taskId);
+      log.info(`[AutoRetry] Re-queued task "${task.title}" after first failure (learning applied)`);
+    }
+  }
+
   return { success: false, taskId, error };
 }
 
@@ -254,7 +429,7 @@ Review the changes and respond with JSON only:
   try {
     const { execSync } = require('child_process');
     const output = execSync(
-      `claude -p ${JSON.stringify(prompt)} --output-format text --permission-mode bypassPermissions`,
+      `claude -p ${JSON.stringify(prompt)} --output-format text --model sonnet`,
       { cwd: project.repo_path, encoding: 'utf-8', timeout: 60000 }
     );
 

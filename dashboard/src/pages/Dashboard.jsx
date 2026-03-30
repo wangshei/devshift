@@ -8,6 +8,7 @@ export default function Dashboard() {
   const { data, refetch } = useApi('/timeline/dashboard', [], 5000);
   const { data: schedule, refetch: refetchSchedule } = useApi('/schedule', [], 5000);
   const { data: agentStatus } = useApi('/agent/status', [], 4000);
+  const { data: credits } = useApi('/credits', [], 10000);
 
   const isAlwaysOn = !!schedule?.always_on;
   const isOffToday = !!schedule?.off_today;
@@ -61,7 +62,9 @@ export default function Dashboard() {
                       ? agentStatus.currentTask.title
                       : agentCanWork
                         ? `${backlogCount} task${backlogCount !== 1 ? 's' : ''} in queue`
-                        : 'Turn on auto-pilot to use your unused credits'
+                        : backlogCount > 0
+                          ? `${backlogCount} task${backlogCount !== 1 ? 's' : ''} waiting — turn on auto-pilot or click 'run for today' to start`
+                          : 'Turn on auto-pilot to use your unused credits'
                     }
                   </p>
                 </div>
@@ -77,6 +80,12 @@ export default function Dashboard() {
                 }`} />
               </button>
             </div>
+            {credits && credits.realCostUsd > 0 && (
+              <div className="flex items-center gap-4 mt-2 text-[11px] font-mono text-vmuted">
+                <span>${credits.realCostUsd.toFixed(2)} spent this week</span>
+                <span>{credits.executionCount} task{credits.executionCount !== 1 ? 's' : ''}</span>
+              </div>
+            )}
             <div className="flex items-center gap-2 mt-2">
               <span className="text-[10px] text-vmuted">Auto-pilot</span>
               {!isAlwaysOn && !agentCanWork && (
@@ -113,7 +122,10 @@ export default function Dashboard() {
                   <div className="flex-1 min-w-0">
                     <span className="text-sm font-medium text-text truncate block">{p.project.name}</span>
                     {p.activeTask && (
-                      <span className="text-[11px] text-muted truncate block">Working: {p.activeTask.title}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-muted truncate">Working: {p.activeTask.title}</span>
+                        <span className="text-[10px] text-accent animate-pulse">live</span>
+                      </div>
                     )}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">

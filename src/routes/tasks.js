@@ -64,6 +64,34 @@ router.post('/', (req, res) => {
   res.status(201).json(task);
 });
 
+// POST /api/tasks/log-work — record manually completed work
+router.post('/log-work', (req, res) => {
+  const db = getDb();
+  const { project_id, title, description } = req.body;
+  if (!project_id || !title) {
+    return res.status(400).json({ error: 'project_id and title required' });
+  }
+
+  const id = uuid();
+  db.prepare(`
+    INSERT INTO tasks (id, project_id, title, description, task_type, tier, status,
+      result_summary, completed_at)
+    VALUES (?, ?, ?, ?, 'human', 1, 'done', ?, datetime('now'))
+  `).run(id, project_id, title, description || null, title);
+
+  // Learn from this human work
+  try {
+    const { addProjectMemory, PROJECT_CATEGORIES } = require('../services/memory');
+    addProjectMemory(project_id, PROJECT_CATEGORIES.COMPLETED, `Human completed: ${title}`, id);
+    if (description) {
+      addProjectMemory(project_id, PROJECT_CATEGORIES.CONTEXT, `Human work context: ${description.slice(0, 300)}`, id);
+    }
+  } catch {}
+
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+  res.status(201).json(task);
+});
+
 // PATCH /api/tasks/:id
 router.patch('/:id', (req, res) => {
   const db = getDb();
@@ -74,7 +102,7 @@ router.patch('/:id', (req, res) => {
     'deadline', 'pre_approved', 'branch_name', 'pr_url', 'pr_number',
     'result_summary', 'review_instructions', 'execution_log', 'model',
     'provider', 'estimated_minutes', 'actual_minutes', 'started_at',
-    'completed_at', 'parent_task_id'];
+    'completed_at', 'parent_task_id', 'session_id'];
   const updates = [];
   const values = [];
 
@@ -182,6 +210,104 @@ router.post('/:id/approve', (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// POST /api/tasks/:id/dismiss — mark research/analysis task as done without merging
+router.post('/:id/dismiss', (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  // Clean up branch if it exists
+  if (task.branch_name) {
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
+    if (project) {
+      const gitUtils = require('../utils/git');
+      try {
+        const defaultBranch = gitUtils.getDefaultBranch(project.repo_path);
+        gitUtils.checkout(project.repo_path, defaultBranch);
+        gitUtils.deleteBranch(project.repo_path, task.branch_name);
+      } catch { /* branch may not exist */ }
+    }
+  }
+
+  db.prepare("UPDATE tasks SET status = 'done' WHERE id = ?").run(task.id);
+  res.json({ dismissed: true });
+});
+
+// POST /api/tasks/:id/takeover — open Claude session in terminal for manual control
+router.post('/:id/takeover', (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  // Get session_id from column (preferred) or fallback to execution_log
+  const sessionId = task.session_id
+    || ((task.execution_log || '').match(/__session_id__:([\w-]+)/) || [])[1];
+  if (!sessionId) {
+    return res.status(400).json({ error: 'No session found for this task. The task may not have been executed yet.' });
+  }
+  const repoPath = project.repo_path;
+
+  // Open Terminal.app with claude --resume
+  const { exec } = require('child_process');
+  const script = `
+    tell application "Terminal"
+      activate
+      do script "cd ${JSON.stringify(repoPath).slice(1, -1)} && claude --resume ${sessionId}"
+    end tell
+  `;
+
+  exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (err) => {
+    if (err) {
+      // Fallback: try iTerm2
+      const itermScript = `
+        tell application "iTerm2"
+          activate
+          create window with default profile
+          tell current session of current window
+            write text "cd ${repoPath.replace(/"/g, '\\"')} && claude --resume ${sessionId}"
+          end tell
+        end tell
+      `;
+      exec(`osascript -e '${itermScript.replace(/'/g, "'\\''")}'`, (err2) => {
+        if (err2) {
+          return res.status(500).json({ error: 'Could not open terminal. Try running manually: claude --resume ' + sessionId });
+        }
+        res.json({ opened: true, terminal: 'iTerm2', sessionId });
+      });
+      return;
+    }
+    res.json({ opened: true, terminal: 'Terminal.app', sessionId });
+  });
+});
+
+// POST /api/tasks/:id/approve-plan — approve PM decomposition plan
+router.post('/:id/approve-plan', (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  // Mark parent as approved, queue all subtasks for execution
+  db.prepare("UPDATE tasks SET plan_status = 'approved' WHERE id = ?").run(req.params.id);
+  db.prepare("UPDATE tasks SET status = 'queued' WHERE parent_task_id = ? AND status = 'backlog'")
+    .run(req.params.id);
+
+  res.json({ approved: true });
+});
+
+// POST /api/tasks/:id/revise-plan — user edited subtasks, re-queue
+router.post('/:id/revise-plan', (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  db.prepare("UPDATE tasks SET plan_status = 'revised' WHERE id = ?").run(req.params.id);
+  // Subtasks stay in backlog — user can delete/edit/add before approving
+  res.json({ revised: true });
 });
 
 // POST /api/tasks/:id/reject — delete the task branch, mark as failed
