@@ -214,6 +214,11 @@ function migrate() {
     database.exec("ALTER TABLE tasks ADD COLUMN plan_status TEXT DEFAULT 'auto'");
   }
 
+  // Migration: add worker column to track who is working on a task
+  if (!taskCols2.find(c => c.name === 'worker')) {
+    database.exec("ALTER TABLE tasks ADD COLUMN worker TEXT DEFAULT 'agent'");
+  }
+
   // Migration: add memory limit columns to schedule
   const schCols2 = database.prepare("PRAGMA table_info(schedule)").all();
   if (!schCols2.find(c => c.name === 'memory_per_category')) {

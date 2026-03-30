@@ -96,6 +96,8 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { data: dashData, refetch: refetchDash } = useApi('/timeline/dashboard', [], 8000);
+  const { data: myWorkData } = useApi('/my-work', null, 10000);
+  const attentionCount = myWorkData?.counts?.needsAttention || 0;
 
   const [showAddProject, setShowAddProject] = useState(false);
 
@@ -169,8 +171,26 @@ export default function Sidebar() {
         )}
       </div>
 
-      {/* Bottom nav: Timeline + Settings */}
+      {/* Bottom nav: My Work + Timeline + Settings */}
       <div className="px-3 pb-4 border-t border-border pt-3 flex flex-col gap-0.5">
+        <button
+          onClick={() => navigate('/my-work')}
+          className={`flex items-center gap-2.5 px-2 py-1.5 rounded-md w-full transition-colors ${
+            location.pathname === '/my-work'
+              ? 'text-accent bg-accent/10'
+              : 'text-vmuted hover:text-muted hover:bg-hover'
+          }`}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-4 h-4 shrink-0">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+          </svg>
+          <span className="text-xs flex-1 text-left">My Work</span>
+          {attentionCount > 0 && (
+            <span className="min-w-[16px] h-4 px-1 bg-warning text-bg text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
+              {attentionCount}
+            </span>
+          )}
+        </button>
         <button
           onClick={() => navigate('/timeline')}
           className={`flex items-center gap-2.5 px-2 py-1.5 rounded-md w-full transition-colors ${

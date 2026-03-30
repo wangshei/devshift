@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { useApi } from './hooks/useApi';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import ProjectFeed from './pages/ProjectFeed';
 import Settings from './pages/Settings';
 import Setup from './pages/Setup';
 import Timeline from './pages/Timeline';
+import MyWork from './pages/MyWork';
 import ThemeToggle from './components/ThemeToggle';
 
 function App() {
@@ -55,6 +57,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/project/:id" element={<ProjectFeed />} />
+            <Route path="/my-work" element={<MyWork />} />
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
@@ -67,6 +70,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/project/:id" element={<ProjectFeed />} />
+            <Route path="/my-work" element={<MyWork />} />
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
@@ -80,6 +84,11 @@ function App() {
 }
 
 function MobileBottomNav() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { data: myWorkData } = useApi('/my-work', null, 10000);
+  const attentionCount = myWorkData?.counts?.needsAttention || 0;
+
   return (
     <nav className="fixed bottom-0 left-0 right-0 bg-card border-t border-border flex justify-around py-2 z-50">
       <NavLink
@@ -94,6 +103,22 @@ function MobileBottomNav() {
         </svg>
         <span className="text-[10px]">Home</span>
       </NavLink>
+      <button
+        onClick={() => navigate('/my-work')}
+        className={`flex flex-col items-center gap-1 px-4 py-1 relative ${
+          location.pathname === '/my-work' ? 'text-accent' : 'text-muted'
+        }`}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-5 h-5">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+        </svg>
+        {attentionCount > 0 && (
+          <span className="absolute top-0 right-2 min-w-[14px] h-3.5 px-0.5 bg-warning text-bg text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
+            {attentionCount}
+          </span>
+        )}
+        <span className="text-[10px]">My Work</span>
+      </button>
       <NavLink
         to="/timeline"
         className={({ isActive }) =>

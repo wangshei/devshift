@@ -68,6 +68,85 @@ app.get('/api/credits', (req, res) => {
   res.json({ ...getCreditUsage(), agentTasksDone, humanTasksDone, providerBreakdown });
 });
 
+// My Work endpoint — cross-project view for the human
+app.get('/api/my-work', (req, res) => {
+  const db = require('./db').getDb();
+
+  // Active human work
+  const activeWork = db.prepare(`
+    SELECT t.*, p.name as project_name, p.repo_path
+    FROM tasks t JOIN projects p ON t.project_id = p.id
+    WHERE t.status = 'in_progress' AND t.worker LIKE 'human%'
+    ORDER BY t.started_at DESC
+  `).all();
+
+  // Plan reviews
+  const planReviews = db.prepare(`
+    SELECT t.*, p.name as project_name
+    FROM tasks t JOIN projects p ON t.project_id = p.id
+    WHERE t.plan_status = 'pending_review' AND t.status = 'needs_review'
+    ORDER BY t.created_at DESC
+  `).all();
+
+  // Code reviews (needs_review, not analysis, not plan)
+  const codeReviews = db.prepare(`
+    SELECT t.*, p.name as project_name
+    FROM tasks t JOIN projects p ON t.project_id = p.id
+    WHERE t.status = 'needs_review' AND t.tier != 3
+      AND (t.plan_status IS NULL OR t.plan_status != 'pending_review')
+      AND t.branch_name IS NOT NULL
+    ORDER BY t.completed_at DESC
+  `).all();
+
+  // Analysis results
+  const analyses = db.prepare(`
+    SELECT t.*, p.name as project_name
+    FROM tasks t JOIN projects p ON t.project_id = p.id
+    WHERE t.status = 'needs_review' AND t.tier = 3
+    ORDER BY t.completed_at DESC
+  `).all();
+
+  // Human tasks awaiting action
+  const humanTasks = db.prepare(`
+    SELECT t.*, p.name as project_name
+    FROM tasks t JOIN projects p ON t.project_id = p.id
+    WHERE t.task_type = 'human' AND t.status IN ('backlog', 'queued')
+    ORDER BY t.priority ASC, t.created_at ASC
+  `).all();
+
+  // Failed tasks
+  const failed = db.prepare(`
+    SELECT t.*, p.name as project_name
+    FROM tasks t JOIN projects p ON t.project_id = p.id
+    WHERE t.status = 'failed'
+    ORDER BY t.completed_at DESC LIMIT 20
+  `).all();
+
+  // Recently completed (last 24h)
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const recentlyCompleted = db.prepare(`
+    SELECT t.*, p.name as project_name
+    FROM tasks t JOIN projects p ON t.project_id = p.id
+    WHERE t.status = 'done' AND t.completed_at > ?
+    ORDER BY t.completed_at DESC
+  `).all(yesterday);
+
+  res.json({
+    activeWork,
+    planReviews,
+    codeReviews,
+    analyses,
+    humanTasks,
+    failed,
+    recentlyCompleted,
+    counts: {
+      needsAttention: planReviews.length + codeReviews.length + analyses.length + humanTasks.length + failed.length,
+      activeWork: activeWork.length,
+      recentlyCompleted: recentlyCompleted.length,
+    }
+  });
+});
+
 // Serve dashboard in production
 const dashboardDist = path.join(__dirname, '..', 'dashboard', 'dist');
 app.use(express.static(dashboardDist));

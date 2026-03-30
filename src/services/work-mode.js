@@ -94,6 +94,17 @@ function gatherProjectContext(project) {
 }
 
 /**
+ * Check if the Claude Code provider is enabled in the database.
+ */
+function isClaudeAvailable() {
+  try {
+    const db = getDb();
+    const provider = db.prepare("SELECT * FROM providers WHERE id = 'claude_code' AND enabled = 1").get();
+    return !!provider;
+  } catch { return true; } // Default to available if DB check fails
+}
+
+/**
  * Use a coding agent to expand a vague task into a clear, actionable prompt.
  */
 async function improvePrompt(taskId) {
@@ -165,6 +176,11 @@ Return JSON only:
 
 If the task is simple enough to not need subtasks, return an empty subtasks array.
 Return ONLY the JSON, no other text.`;
+
+  if (!isClaudeAvailable()) {
+    log.warn('[WorkMode] Claude Code provider is disabled — skipping prompt improvement');
+    return { improved: false, taskId, error: 'Claude Code provider is disabled' };
+  }
 
   try {
     // Use claude to improve the prompt

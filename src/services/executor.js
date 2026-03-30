@@ -398,6 +398,13 @@ async function runReviewer(project, branchName, task, providerRecord) {
   // Only use Claude Code for reviews
   if (providerRecord.id !== 'claude_code') return null;
 
+  // Check provider is enabled
+  try {
+    const db = getDb();
+    const provider = db.prepare("SELECT * FROM providers WHERE id = 'claude_code' AND enabled = 1").get();
+    if (!provider) return null;
+  } catch {}
+
   const gitUtils = require('../utils/git');
   let diff;
   try {

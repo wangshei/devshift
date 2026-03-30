@@ -125,6 +125,7 @@ function TaskCard({ task, onAction }) {
   const [showDiff, setShowDiff] = useState(false);
   const [acting, setActing] = useState(false);
   const [showOutput, setShowOutput] = useState(false);
+  const [handoffNote, setHandoffNote] = useState('');
 
   const s = STATUS_ICONS[task.status] || STATUS_ICONS.backlog;
   const time = task.completed_at || task.started_at;
@@ -185,6 +186,18 @@ function TaskCard({ task, onAction }) {
     }
   };
 
+  const handleHandoff = async (done = false) => {
+    setActing(true);
+    try {
+      await api(`/tasks/${task.id}/handoff`, {
+        method: 'POST',
+        body: { note: handoffNote, done }
+      });
+      onAction?.();
+    } catch {}
+    finally { setActing(false); }
+  };
+
   return (
     <div className={`bg-card border rounded-lg transition-colors ${
       isAnalysisReview ? 'border-research/30' :
@@ -206,11 +219,14 @@ function TaskCard({ task, onAction }) {
               <span className="text-[10px] font-mono uppercase text-research">Analysis</span>
             )}
             <span className="text-sm text-text">{task.title}</span>
-            {isInProgress && (
+            {isInProgress && task.worker?.startsWith('human') && (
+              <span className="text-[10px] text-accent font-mono">you're on this</span>
+            )}
+            {isInProgress && !task.worker?.startsWith('human') && (
               <span className="text-[10px] text-accent font-mono animate-pulse">working...</span>
             )}
           </div>
-          {isInProgress && (
+          {isInProgress && !task.worker?.startsWith('human') && (
             <div className="mt-1.5 h-0.5 w-24 bg-accent/20 rounded-full overflow-hidden">
               <div className="h-full bg-accent rounded-full animate-pulse w-1/2" />
             </div>
@@ -235,8 +251,28 @@ function TaskCard({ task, onAction }) {
         </div>
       </div>
 
-      {/* Live log for in-progress tasks */}
-      {isInProgress && (
+      {/* Human working — show handoff UI */}
+      {isInProgress && task.worker?.startsWith('human') && (
+        <div className="border-t border-border px-4 py-3 space-y-2">
+          <p className="text-[10px] text-accent font-mono">You're working on this</p>
+          <input value={handoffNote} onChange={e => setHandoffNote(e.target.value)}
+            placeholder="Leave a note for the agent (optional)"
+            className="w-full bg-bg border border-border rounded px-2 py-1.5 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent" />
+          <div className="flex gap-2">
+            <button onClick={() => handleHandoff(false)} disabled={acting}
+              className="px-3 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition-colors font-medium">
+              Hand off to agent
+            </button>
+            <button onClick={() => handleHandoff(true)} disabled={acting}
+              className="px-3 py-1.5 text-xs bg-success text-white rounded-lg hover:bg-success/80 disabled:opacity-50 transition-colors font-medium">
+              Mark done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Live log for in-progress tasks (agent only) */}
+      {isInProgress && !task.worker?.startsWith('human') && (
         <div className="mt-0 border-t border-border px-4 pt-2 pb-3">
           <p className="text-[10px] text-accent font-mono mb-1 animate-pulse">● Live output</p>
           <LiveLog taskId={task.id} />
@@ -360,6 +396,55 @@ function TaskCard({ task, onAction }) {
       {expanded && showDiff && diff && (
         <SplitDiffViewer diff={diff.diff} stat={diff.stat} />
       )}
+    </div>
+  );
+}
+
+function FailedTaskCard({ task, onRetry, onDelete, onTakeover }) {
+  const [showFull, setShowFull] = useState(false);
+
+  return (
+    <div className="bg-card border border-error/30 rounded-lg px-4 py-3 space-y-2">
+      <div className="flex items-start gap-3">
+        <span className="text-error text-sm shrink-0 mt-0.5">✕</span>
+        <div className="flex-1 min-w-0">
+          <span className="text-sm text-text">{task.title}</span>
+          {task.execution_log && (
+            <div className="mt-1">
+              <p className={`text-xs text-error/70 font-mono leading-relaxed ${showFull ? '' : 'line-clamp-2'}`}>
+                {task.execution_log}
+              </p>
+              {task.execution_log.length > 100 && (
+                <button onClick={() => setShowFull(!showFull)}
+                  className="text-[10px] text-vmuted hover:text-muted mt-0.5">
+                  {showFull ? 'Show less' : 'Show more'}
+                </button>
+              )}
+            </div>
+          )}
+          {showFull && task.review_instructions && (
+            <p className="text-xs text-muted mt-1 leading-relaxed whitespace-pre-wrap">
+              {task.review_instructions}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={() => onTakeover(task.id)}
+            className="text-xs text-muted hover:text-accent border border-border rounded-md px-2 py-1 transition-colors"
+            title="Open in terminal">
+            Take over
+          </button>
+          <button onClick={() => onRetry(task.id)}
+            className="text-xs text-muted hover:text-accent border border-border rounded-md px-2 py-1 transition-colors">
+            Retry
+          </button>
+          <button onClick={() => onDelete(task.id)}
+            className="text-xs text-vmuted hover:text-error transition-colors px-1"
+            title="Delete task">
+            ✕
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -550,30 +635,13 @@ export default function ProjectFeed() {
             </div>
             <div className="flex flex-col gap-2">
               {failed.map(t => (
-                <div key={t.id} className="bg-card border border-error/30 rounded-lg px-4 py-3 space-y-2">
-                  <div className="flex items-start gap-3">
-                    <span className="text-error text-sm shrink-0 mt-0.5">✕</span>
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm text-text">{t.title}</span>
-                      {t.execution_log && (
-                        <p className="text-xs text-error/70 mt-1 font-mono leading-relaxed line-clamp-2">{t.execution_log}</p>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => handleTakeoverTask(t.id)}
-                      className="shrink-0 text-xs text-muted hover:text-accent border border-border rounded-md px-2 py-1 transition-colors"
-                      title="Open this session in Terminal to continue manually"
-                    >
-                      Take over
-                    </button>
-                    <button
-                      onClick={() => handleRetryTask(t.id)}
-                      className="shrink-0 text-xs text-muted hover:text-accent border border-border rounded-md px-2 py-1 transition-colors"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                </div>
+                <FailedTaskCard
+                  key={t.id}
+                  task={t}
+                  onRetry={handleRetryTask}
+                  onDelete={handleDeleteTask}
+                  onTakeover={handleTakeoverTask}
+                />
               ))}
             </div>
           </div>

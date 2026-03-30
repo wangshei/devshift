@@ -87,6 +87,13 @@ async function analyzeProject(projectId, analysisType = 'code_quality') {
   const prompt = ANALYSIS_PROMPTS[analysisType];
   if (!prompt) throw new Error(`Unknown analysis type: ${analysisType}`);
 
+  // Check provider is enabled
+  const provider = db.prepare("SELECT * FROM providers WHERE id = 'claude_code' AND enabled = 1").get();
+  if (!provider) {
+    log.info('[SmartMode] Claude Code provider is disabled — skipping analysis');
+    return { success: false, error: 'Provider disabled' };
+  }
+
   log.info(`[SmartMode] Running ${analysisType} analysis on "${project.name}"`);
 
   // Gather project context for a richer analysis

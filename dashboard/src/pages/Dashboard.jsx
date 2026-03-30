@@ -80,12 +80,6 @@ export default function Dashboard() {
                 }`} />
               </button>
             </div>
-            {credits && credits.realCostUsd > 0 && (
-              <div className="flex items-center gap-4 mt-2 text-[11px] font-mono text-vmuted">
-                <span>${credits.realCostUsd.toFixed(2)} spent this week</span>
-                <span>{credits.executionCount} task{credits.executionCount !== 1 ? 's' : ''}</span>
-              </div>
-            )}
             <div className="flex items-center gap-2 mt-2">
               <span className="text-[10px] text-vmuted">Auto-pilot</span>
               {!isAlwaysOn && !agentCanWork && (
@@ -101,6 +95,62 @@ export default function Dashboard() {
               )}
             </div>
           </div>
+
+          {/* Credits & Usage */}
+          {credits && (
+            <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xs font-mono text-vmuted uppercase tracking-wider">Usage this week</h2>
+                {credits.realCostUsd > 0 && (
+                  <span className="text-sm font-mono font-medium text-text">${credits.realCostUsd.toFixed(2)}</span>
+                )}
+              </div>
+
+              {/* Budget bar */}
+              <div>
+                <div className="flex justify-between text-[10px] font-mono text-vmuted mb-1">
+                  <span>Agent: {credits.usedPercent}%</span>
+                  <span>Reserved for you: {credits.reservedPercent}%</span>
+                  <span>Available: {credits.availablePercent}%</span>
+                </div>
+                <div className="h-2 bg-bg rounded-full overflow-hidden flex">
+                  <div className="bg-accent h-full" style={{ width: `${credits.usedPercent}%` }} />
+                  <div className="bg-warning/30 h-full" style={{ width: `${credits.reservedPercent}%` }} />
+                  <div className="bg-success/20 h-full" style={{ width: `${credits.availablePercent}%` }} />
+                </div>
+              </div>
+
+              {/* Stats row */}
+              <div className="flex gap-4 text-[11px] font-mono">
+                <div>
+                  <span className="text-vmuted">Agent tasks: </span>
+                  <span className="text-text">{credits.agentTasksDone}</span>
+                </div>
+                <div>
+                  <span className="text-vmuted">Human tasks: </span>
+                  <span className="text-text">{credits.humanTasksDone}</span>
+                </div>
+                <div>
+                  <span className="text-vmuted">Executions: </span>
+                  <span className="text-text">{credits.executionCount || 0}</span>
+                </div>
+              </div>
+
+              {/* Provider breakdown */}
+              {credits.providerBreakdown?.length > 0 && (
+                <div className="flex gap-3 text-[10px] font-mono text-vmuted pt-1 border-t border-border">
+                  {credits.providerBreakdown.map(p => (
+                    <span key={p.id}>
+                      {p.name}: {p.tasksDone} tasks
+                      {p.rateLimitedUntil && new Date(p.rateLimitedUntil) > new Date() && (
+                        <span className="text-warning ml-1">(rate limited)</span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Projects */}
           <div>

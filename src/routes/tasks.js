@@ -64,6 +64,151 @@ router.post('/', (req, res) => {
   res.status(201).json(task);
 });
 
+// POST /api/tasks/:id/start-work — human starts working on a task
+router.post('/:id/start-work', (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const workerName = req.body.worker || 'human';
+
+  // Create a branch if one doesn't exist
+  let branchName = task.branch_name;
+  if (!branchName) {
+    const gitUtils = require('../utils/git');
+    try {
+      const slugify = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+      branchName = `devshift/${task.id.slice(0, 8)}-${slugify(task.title)}`;
+      const defaultBranch = gitUtils.getDefaultBranch(project.repo_path);
+      gitUtils.checkout(project.repo_path, defaultBranch);
+      gitUtils.createBranch(project.repo_path, branchName);
+    } catch (e) {
+      // Branch might already exist, that's ok
+    }
+  }
+
+  // Mark task as in_progress with human worker
+  db.prepare(`
+    UPDATE tasks SET status = 'in_progress', worker = ?, branch_name = ?,
+      started_at = COALESCE(started_at, datetime('now'))
+    WHERE id = ?
+  `).run(workerName, branchName, req.params.id);
+
+  // Open terminal with Claude session
+  const { exec } = require('child_process');
+
+  // Build a contextual prompt for the human's Claude session
+  const contextPrompt = `You are helping a developer work on this task:
+
+Task: ${task.title}
+${task.description ? 'Description: ' + task.description : ''}
+
+The developer is working interactively. Help them with whatever they need.
+Read relevant files, suggest changes, run tests — follow their lead.`;
+
+  const sessionId = task.session_id;
+  const claudeCmd = sessionId
+    ? `claude --resume ${sessionId}`
+    : `claude -p ${JSON.stringify(contextPrompt).replace(/'/g, "'\\''")} --permission-mode bypassPermissions`;
+
+  // Try Terminal.app, fallback to iTerm2
+  const script = `
+    tell application "Terminal"
+      activate
+      do script "cd ${JSON.stringify(project.repo_path).slice(1, -1)} && ${claudeCmd}"
+    end tell
+  `;
+
+  exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (err) => {
+    if (err) {
+      const itermScript = `
+        tell application "iTerm2"
+          activate
+          create window with default profile
+          tell current session of current window
+            write text "cd ${project.repo_path.replace(/"/g, '\\"')} && ${claudeCmd}"
+          end tell
+        end tell
+      `;
+      exec(`osascript -e '${itermScript.replace(/'/g, "'\\''")}'`, (err2) => {
+        if (err2) {
+          return res.json({
+            started: true, branchName,
+            manualCommand: `cd "${project.repo_path}" && ${claudeCmd}`,
+            error: 'Could not open terminal automatically'
+          });
+        }
+        res.json({ started: true, terminal: 'iTerm2', branchName });
+      });
+      return;
+    }
+    res.json({ started: true, terminal: 'Terminal.app', branchName });
+  });
+});
+
+// POST /api/tasks/:id/handoff — human hands off task to agent
+router.post('/:id/handoff', (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
+  const note = req.body.note || '';
+  const markDone = req.body.done === true;
+
+  if (markDone) {
+    // Human finished the task
+    db.prepare(`
+      UPDATE tasks SET status = 'done', worker = 'human',
+        result_summary = ?, completed_at = datetime('now')
+      WHERE id = ?
+    `).run(note || 'Completed by human', req.params.id);
+
+    // Learn from it
+    try {
+      const { addProjectMemory, PROJECT_CATEGORIES } = require('../services/memory');
+      addProjectMemory(task.project_id, PROJECT_CATEGORIES.COMPLETED,
+        `Human completed: ${task.title}${note ? '. Note: ' + note : ''}`, task.id);
+    } catch {}
+
+    res.json({ handedOff: false, completed: true });
+  } else {
+    // Human is handing off to agent to continue
+    // Detect any new commits the human made
+    let humanWork = '';
+    if (task.branch_name && project) {
+      try {
+        const gitUtils = require('../utils/git');
+        const defaultBranch = gitUtils.getDefaultBranch(project.repo_path);
+        const diff = gitUtils.branchDiffStat(project.repo_path, task.branch_name, defaultBranch);
+        if (diff) humanWork = `\n\nHuman made these changes so far:\n${diff}`;
+      } catch {}
+    }
+
+    // Append handoff context to description
+    const handoffNote = `\n\n---\n**Handoff from human:**${note ? ' ' + note : ' Continue from where I left off.'}${humanWork}`;
+
+    db.prepare(`
+      UPDATE tasks SET status = 'queued', worker = 'agent',
+        description = COALESCE(description, '') || ?
+      WHERE id = ?
+    `).run(handoffNote, req.params.id);
+
+    // Store handoff in memory
+    try {
+      const { addProjectMemory, PROJECT_CATEGORIES } = require('../services/memory');
+      addProjectMemory(task.project_id, PROJECT_CATEGORIES.CONTEXT,
+        `Human handed off "${task.title}": ${note || 'continue from where they left off'}${humanWork ? '. Changes: ' + humanWork.slice(0, 200) : ''}`,
+        task.id);
+    } catch {}
+
+    res.json({ handedOff: true, completed: false });
+  }
+});
+
 // POST /api/tasks/log-work — record manually completed work
 router.post('/log-work', (req, res) => {
   const db = getDb();

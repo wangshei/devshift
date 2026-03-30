@@ -263,6 +263,18 @@ export default function HumanTaskCard({ task, onAction }) {
     finally { setActing(false); }
   };
 
+  const handleStartWork = async () => {
+    setActing(true);
+    try {
+      const result = await api(`/tasks/${task.id}/start-work`, { method: 'POST' });
+      if (result.error) alert(result.error);
+      if (result.manualCommand) alert('Run manually: ' + result.manualCommand);
+      onAction?.();
+    } catch (e) {
+      alert('Could not start: ' + e.message);
+    } finally { setActing(false); }
+  };
+
   // Plan review gate — intercept before other checks
   const isPlanReview = task.plan_status === 'pending_review';
   if (isPlanReview) {
@@ -342,11 +354,19 @@ export default function HumanTaskCard({ task, onAction }) {
               <p className="text-sm mt-0.5 text-text">{task.title}</p>
 
               {/* Show result summary prominently */}
-              {resultText && (
+              {resultText ? (
                 <div className="mt-2 p-3 bg-bg rounded-lg border border-border">
                   <p className="text-xs text-muted leading-relaxed whitespace-pre-wrap">{resultText}</p>
                 </div>
-              )}
+              ) : generatedTasks ? (
+                <div className="mt-2 p-3 bg-bg rounded-lg border border-border">
+                  <p className="text-xs text-muted leading-relaxed">
+                    Found {generatedTasks.length} improvement{generatedTasks.length !== 1 ? 's' : ''} for this project.
+                    {generatedTasks.filter(t => t.priority <= 2).length > 0 &&
+                      ` ${generatedTasks.filter(t => t.priority <= 2).length} are high priority.`}
+                  </p>
+                </div>
+              ) : null}
 
               {/* Show generated tasks as a checklist */}
               {generatedTasks && (
@@ -358,7 +378,12 @@ export default function HumanTaskCard({ task, onAction }) {
                     {generatedTasks.map((t, i) => (
                       <li key={i} className="flex items-start gap-1.5 text-xs text-muted">
                         <span className="text-vmuted shrink-0">{'\u25CB'}</span>
-                        <span>{t.title}</span>
+                        <div>
+                          <span>{t.title}</span>
+                          {t.description && (
+                            <p className="text-[10px] text-vmuted mt-0.5">{t.description.slice(0, 100)}</p>
+                          )}
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -464,16 +489,18 @@ export default function HumanTaskCard({ task, onAction }) {
         {/* Human task completion */}
         {task.task_type === 'human' && !isReview && (
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
-            <input
-              value={workNote}
-              onChange={e => setWorkNote(e.target.value)}
+            <button onClick={handleStartWork} disabled={acting}
+              className="px-3 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition-colors font-medium">
+              Work on this
+            </button>
+            <div className="flex-1" />
+            <input value={workNote} onChange={e => setWorkNote(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleComplete()}
-              placeholder="What did you do?"
-              className="flex-1 bg-bg border border-border rounded-lg px-3 py-1.5 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent"
-            />
+              placeholder="or note what you did"
+              className="flex-1 bg-bg border border-border rounded px-2 py-1.5 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent" />
             <button onClick={handleComplete} disabled={acting}
-              className="px-3 py-1.5 text-xs bg-success text-white rounded-lg hover:bg-success/80 disabled:opacity-50 transition-colors font-medium">
-              {acting ? 'Saving...' : 'Done'}
+              className="px-3 py-1.5 text-xs bg-success/80 text-white rounded-lg hover:bg-success disabled:opacity-50 transition-colors">
+              Done
             </button>
           </div>
         )}
