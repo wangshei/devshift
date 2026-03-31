@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useApi } from './hooks/useApi';
+import { ToastProvider } from './components/Toast';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import ProjectFeed from './pages/ProjectFeed';

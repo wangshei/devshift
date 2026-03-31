@@ -230,6 +230,9 @@ function migrate() {
   if (!schCols2.find(c => c.name === 'log_retention_days')) {
     database.exec("ALTER TABLE schedule ADD COLUMN log_retention_days INTEGER DEFAULT 7");
   }
+  if (!schCols2.find(c => c.name === 'weekly_budget_usd')) {
+    database.exec('ALTER TABLE schedule ADD COLUMN weekly_budget_usd REAL');
+  }
 
   // === Product OS tables ===
 

@@ -51,6 +51,20 @@ function getCreditUsage() {
 }
 
 /**
+ * Estimate the USD cost of running a task based on tier and model.
+ * @param {{ tier?: number, model?: string }} task
+ * @returns {number} Estimated cost in USD
+ */
+const estimateCostUsd = estimateTaskCostUsd;
+
+/**
+ * @deprecated Use estimateCostUsd() instead.
+ */
+function estimateCreditCost(task) {
+  return estimateCostUsd(task);
+}
+
+/**
  * Check if we can afford to run a task based on real USD spend.
  */
 function canAffordTask(task) {
@@ -82,6 +96,6 @@ function getTasksExecutedThisWindow() {
 }
 
 module.exports = {
-  estimateTaskCostUsd, getCreditUsage, canAffordTask,
+  estimateTaskCostUsd, estimateCostUsd, estimateCreditCost, getCreditUsage, canAffordTask,
   getMaxTasksForWindow, getTasksExecutedThisWindow,
 };
