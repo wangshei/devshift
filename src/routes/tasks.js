@@ -8,7 +8,7 @@ const router = Router();
 // GET /api/tasks
 router.get('/', (req, res) => {
   const db = getDb();
-  const { project_id, status, task_type } = req.query;
+  const { project_id, status, task_type, parent_task_id } = req.query;
 
   let sql = 'SELECT * FROM tasks WHERE 1=1';
   const params = [];
@@ -16,6 +16,7 @@ router.get('/', (req, res) => {
   if (project_id) { sql += ' AND project_id = ?'; params.push(project_id); }
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (task_type) { sql += ' AND task_type = ?'; params.push(task_type); }
+  if (parent_task_id) { sql += ' AND parent_task_id = ?'; params.push(parent_task_id); }
 
   sql += ' ORDER BY priority ASC, created_at DESC';
 
