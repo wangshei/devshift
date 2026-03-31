@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApi, api } from '../hooks/useApi';
+import { useToast } from './Toast';
 import SplitDiffViewer from './SplitDiffViewer';
 
 const TIER_LABELS = { 1: 'Auto', 2: 'Review', 3: 'Research' };
@@ -167,7 +168,7 @@ function PlanReviewCard({ task, onAction }) {
       await api(`/tasks/${subtaskId}`, { method: 'DELETE' });
       setSubtasks(prev => (prev ?? currentSubtasks).filter(s => s.id !== subtaskId));
     } catch (e) {
-      alert('Could not remove subtask: ' + e.message);
+      toast?.error('Could not remove subtask: ' + e.message);
     }
   };
 
@@ -181,7 +182,7 @@ function PlanReviewCard({ task, onAction }) {
       await api(`/tasks/${task.id}/approve-plan`, { method: 'POST' });
       onAction?.();
     } catch (e) {
-      alert('Could not approve plan: ' + e.message);
+      toast?.error('Could not approve plan: ' + e.message);
     } finally { setApproving(false); }
   };
 
@@ -250,6 +251,7 @@ export default function HumanTaskCard({ task, onAction, onChat }) {
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState(false);
   const [workNote, setWorkNote] = useState('');
+  const toast = useToast();
 
   const handleComplete = async () => {
     setActing(true);
@@ -267,11 +269,11 @@ export default function HumanTaskCard({ task, onAction, onChat }) {
     setActing(true);
     try {
       const result = await api(`/tasks/${task.id}/start-work`, { method: 'POST' });
-      if (result.error) alert(result.error);
-      if (result.manualCommand) alert('Run manually: ' + result.manualCommand);
+      if (result.error) toast?.error(result.error);
+      if (result.manualCommand) toast?.info('Run manually: ' + result.manualCommand);
       onAction?.();
     } catch (e) {
-      alert('Could not start: ' + e.message);
+      toast?.error('Could not start: ' + e.message);
     } finally { setActing(false); }
   };
 
@@ -301,7 +303,7 @@ export default function HumanTaskCard({ task, onAction, onChat }) {
       await api(`/tasks/${task.id}/approve`, { method: 'POST' });
       onAction?.();
     } catch (e) {
-      alert('Merge failed: ' + e.message);
+      toast?.error('Merge failed: ' + e.message);
     } finally { setActing(false); }
   };
 
@@ -327,10 +329,10 @@ export default function HumanTaskCard({ task, onAction, onChat }) {
     try {
       const result = await api(`/tasks/${task.id}/takeover`, { method: 'POST' });
       if (result.error) {
-        alert(result.error);
+        toast?.error(result.error);
       }
     } catch (e) {
-      alert('Could not open terminal: ' + e.message);
+      toast?.error('Could not open terminal: ' + e.message);
     }
   };
 

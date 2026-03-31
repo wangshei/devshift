@@ -81,7 +81,77 @@ function getTasksExecutedThisWindow() {
   return result.count;
 }
 
+/**
+ * Get per-provider average cost stats over the last 30 days.
+ * @returns {Array<{ provider: string, avg_cost: number, runs: number }>}
+ */
+function getProviderCostStats() {
+  const db = getDb();
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  return db.prepare(`
+    SELECT provider, AVG(actual_cost_usd) as avg_cost, COUNT(*) as runs
+    FROM executions
+    WHERE started_at > ? AND actual_cost_usd IS NOT NULL
+    GROUP BY provider
+  `).all(thirtyDaysAgo);
+}
+
+/**
+ * Pick the cheapest eligible provider for a task based on historical cost data.
+ * @param {{ tier?: number }} task
+ * @param {Array<Object>} availableProviders - provider row objects from DB
+ * @returns {Object|null} chosen provider or null
+ */
+function getPreferredProvider(task, availableProviders) {
+  if (!availableProviders || availableProviders.length === 0) return null;
+
+  const db = getDb();
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const tier = task.tier || 2;
+
+  const costByProvider = new Map();
+  for (const provider of availableProviders) {
+    const stats = db.prepare(`
+      SELECT provider, AVG(actual_cost_usd) as avg_cost, COUNT(*) as runs
+      FROM executions
+      WHERE started_at > ? AND provider = ? AND actual_cost_usd IS NOT NULL
+      GROUP BY provider
+    `).get(thirtyDaysAgo, provider.name);
+
+    let avgCost;
+    if (stats && stats.runs >= 3) {
+      avgCost = stats.avg_cost;
+    } else {
+      const isSonnet = /sonnet/i.test(provider.model || provider.name || '');
+      avgCost = isSonnet ? 0.06 : 0.10;
+    }
+    costByProvider.set(provider.name, avgCost);
+  }
+
+  const eligible = availableProviders
+    .filter(p => {
+      if (!p.use_for_tiers) return true;
+      const tiers = String(p.use_for_tiers).split(',').map(Number);
+      return tiers.includes(tier);
+    })
+    .sort((a, b) => costByProvider.get(a.name) - costByProvider.get(b.name));
+
+  if (eligible.length === 0) return null;
+
+  const chosen = eligible[0];
+  const runnerUp = eligible.length > 1 ? eligible[1] : null;
+
+  log.info(
+    `Provider routing: chose ${chosen.name} (avg $${costByProvider.get(chosen.name).toFixed(4)})` +
+    (runnerUp ? `, runner-up: ${runnerUp.name} (avg $${costByProvider.get(runnerUp.name).toFixed(4)})` : '') +
+    ` for tier ${tier} task`
+  );
+
+  return chosen;
+}
+
 module.exports = {
   estimateTaskCostUsd, getCreditUsage, canAffordTask,
   getMaxTasksForWindow, getTasksExecutedThisWindow,
+  getPreferredProvider, getProviderCostStats,
 };

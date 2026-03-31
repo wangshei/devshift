@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useApi, api } from '../hooks/useApi';
+import { useToast } from '../components/Toast';
 import HumanTaskCard from '../components/HumanTaskCard';
 import SplitDiffViewer from '../components/SplitDiffViewer';
 import TaskInput from '../components/TaskInput';
@@ -80,7 +81,7 @@ function cleanSummary(text) {
 // FeatureCard — the main building block of the new view
 // ---------------------------------------------------------------------------
 
-function FeatureCard({ feature, tasks, onAction, onChat }) {
+function FeatureCard({ feature, tasks, onAction, onChat, toast }) {
   const [expanded, setExpanded] = useState(false);
   const [actingTask, setActingTask] = useState(null);
   const [diff, setDiff] = useState(null);
@@ -124,7 +125,7 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
       await api(`/tasks/${taskId}/approve`, { method: 'POST' });
       onAction?.();
     } catch (e) {
-      alert('Merge failed: ' + e.message);
+      toast?.error('Merge failed: ' + e.message);
     } finally { setActingTask(null); }
   };
 
@@ -275,7 +276,7 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
 // IdeasSection
 // ---------------------------------------------------------------------------
 
-function IdeasSection({ projectId, onPromoted }) {
+function IdeasSection({ projectId, onPromoted, toast }) {
   const { data: ideas, refetch } = useApi(`/product/${projectId}/ideas`, []);
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -299,7 +300,7 @@ function IdeasSection({ projectId, onPromoted }) {
       refetch();
       onPromoted?.();
     } catch (e) {
-      alert('Could not promote idea: ' + e.message);
+      toast?.error('Could not promote idea: ' + e.message);
     } finally { setPromoting(null); }
   };
 
@@ -449,12 +450,29 @@ export default function ProjectFeed() {
   const [renamingName, setRenamingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
   const [chatTask, setChatTask] = useState(null);
+  const toast = useToast();
+
+  useEffect(() => {
+    const handleEscape = () => setChatTask(null);
+    window.addEventListener('devshift:escape', handleEscape);
+    return () => window.removeEventListener('devshift:escape', handleEscape);
+  }, []);
 
   const refetch = () => { refetchTimeline(); refetchFeatures(); };
 
   if (!timelineData) return (
-    <div className="px-6 py-6">
-      <div className="text-muted animate-pulse text-sm">Loading...</div>
+    <div className="max-w-2xl mx-auto px-6 py-6 space-y-4 animate-fade-in">
+      <div className="h-6 w-40 bg-border/50 rounded animate-pulse" />
+      <div className="h-3 w-24 bg-border/50 rounded animate-pulse" />
+      {[1, 2, 3].map(i => (
+        <div key={i} className="bg-card border border-border rounded-lg px-4 py-3 space-y-2.5">
+          <div className="flex items-center gap-3">
+            <div className="h-4 bg-border/50 rounded animate-pulse flex-1 max-w-[200px]" />
+            <div className="h-3 w-12 bg-border/50 rounded animate-pulse" />
+          </div>
+          <div className="h-1.5 bg-border/50 rounded-full animate-pulse" />
+        </div>
+      ))}
     </div>
   );
 
@@ -613,6 +631,7 @@ export default function ProjectFeed() {
                   tasks={tasksByFeature[feature.id] || []}
                   onAction={refetch}
                   onChat={setChatTask}
+                  toast={toast}
                 />
               ))}
 
@@ -624,6 +643,7 @@ export default function ProjectFeed() {
                   tasks={orphanTasks.filter(t => t.status !== 'needs_review' && t.task_type !== 'human')}
                   onAction={refetch}
                   onChat={setChatTask}
+                  toast={toast}
                 />
               )}
             </div>
@@ -648,7 +668,7 @@ export default function ProjectFeed() {
         )}
 
         {/* Section 4: Ideas */}
-        <IdeasSection projectId={id} onPromoted={refetch} />
+        <IdeasSection projectId={id} onPromoted={refetch} toast={toast} />
 
         {/* Empty state (no features and no tasks) */}
         {!hasFeatures && allTasks.length === 0 && attentionItems.length === 0 && (
