@@ -66,12 +66,32 @@ function getCreditUsage() {
 }
 
 /**
- * Check if we can afford to run a task based on credit budget.
+ * Estimate USD cost for a task based on tier and model.
+ * @param {{ tier: number, model?: string }} task
+ * @returns {number} estimated cost in USD
+ */
+function estimateUsdCost(task) {
+  const baseCosts = { 1: 0.15, 2: 0.45, 3: 0.30 };
+  const modelMultiplier = task.model === 'opus' ? 2.5 : 1;
+  return (baseCosts[task.tier] || 0.30) * modelMultiplier;
+}
+
+/**
+ * Check if we can afford to run a task based on USD budget.
+ * Reads usd_budget from the schedule row; falls back to $5.00 when absent or NULL.
+ * @param {{ tier: number, model?: string }} task
+ * @returns {boolean}
  */
 function canAffordTask(task) {
-  const cost = estimateCreditCost(task);
-  const usage = getCreditUsage();
-  return usage.available >= cost;
+  const cost = estimateUsdCost(task);
+  const db = getDb();
+  const schedule = db.prepare('SELECT * FROM schedule WHERE id = 1').get();
+  const usdBudget = (schedule && schedule.usd_budget != null) ? schedule.usd_budget : 5.00;
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { spent } = db.prepare(
+    'SELECT COALESCE(SUM(actual_cost_usd), 0) as spent FROM executions WHERE started_at > ?'
+  ).get(weekAgo);
+  return (usdBudget - spent) >= cost;
 }
 
 /**
@@ -98,6 +118,6 @@ function getTasksExecutedThisWindow() {
 }
 
 module.exports = {
-  estimateCreditCost, getCreditUsage, canAffordTask,
+  estimateCreditCost, estimateUsdCost, getCreditUsage, canAffordTask,
   getMaxTasksForWindow, getTasksExecutedThisWindow,
 };
