@@ -1,6 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../hooks/useApi';
 
+function renderContent(content) {
+  const parts = content.split(/(@\S+)/g);
+  return parts.map((part, i) =>
+    /^@\S+$/.test(part)
+      ? <span key={i} className="font-mono text-accent font-semibold">{part}</span>
+      : <span key={i}>{part}</span>
+  );
+}
+
 export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPushed }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -183,7 +192,7 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
                 <span className="text-xs text-muted animate-pulse">Thinking...</span>
               )}
               {msg.content && (
-                <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                <p className="text-xs leading-relaxed whitespace-pre-wrap">{renderContent(msg.content)}</p>
               )}
               {msg.tools?.length > 0 && (
                 <div className="mt-1.5 space-y-0.5">
