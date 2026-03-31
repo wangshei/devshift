@@ -2,87 +2,59 @@ const { getDb } = require('../db');
 const log = require('../utils/logger');
 
 /**
- * Estimate the USD cost of running a task based on tier and model/provider.
- * @param {{ tier?: number, model?: string, provider?: string }} task
+ * Estimate the USD cost of running a task based on tier and model.
+ * Sonnet: ~$0.03-0.06 per task. Opus: ~$0.10-0.20.
+ * @param {{ tier?: number, model?: string }} task
  * @returns {number} Estimated cost in USD
  */
 function estimateTaskCostUsd(task) {
-  const isOpus = ((task.model || '') + (task.provider || '')).includes('opus');
+  const isOpus = (task.model || '').includes('opus');
   const costs = isOpus
     ? { 1: 0.10, 2: 0.20, 3: 0.15 }
     : { 1: 0.03, 2: 0.06, 3: 0.04 };
-  return costs[task.tier] || costs[1];
+  return costs[task.tier] || costs[2];
 }
 
 /**
- * Estimate credit cost for a task based on tier and model.
- * Returns a rough percentage of weekly credits.
- */
-function estimateCreditCost(task) {
-  const baseCosts = { 1: 1, 2: 3, 3: 2 };
-  const modelMultiplier = task.model === 'opus' ? 2.5 : 1;
-  return (baseCosts[task.tier] || 2) * modelMultiplier;
-}
-
-/**
- * Get approximate credit usage stats.
+ * Get credit/cost usage stats for the current week.
  */
 function getCreditUsage() {
   const db = getDb();
-  const schedule = db.prepare('SELECT * FROM schedule WHERE id = 1').get();
-
-  // Count executions this week
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const executions = db.prepare(`
-    SELECT COUNT(*) as count, SUM(estimated_credits) as total_credits
-    FROM executions WHERE started_at > ?
-  `).get(weekAgo);
 
-  // Estimate total budget based on plan
-  const planBudgets = {
-    'pro': 30,          // ~30 "credit units" per week
-    'max 5x': 100,
-    'max_5x': 100,
-    'max 20x': 200,
-    'max_20x': 200,
-    'free': 50,         // Antigravity free tier
-    'unknown': 60,
-  };
-
-  const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(schedule.primary_provider);
-  const tier = provider ? (provider.plan_tier || 'unknown') : 'unknown';
-  const budget = planBudgets[tier] || 60;
-
-  const agentUsed = executions.total_credits || 0;
-  const reservePercent = schedule.reserve_percent || 40;
-  const reserved = budget * (reservePercent / 100);
-  const available = Math.max(0, budget - agentUsed - reserved);
-
-  // Get real USD costs from provider responses
-  const realCosts = db.prepare(`
+  // Real USD costs from execution records
+  const costs = db.prepare(`
     SELECT COALESCE(SUM(actual_cost_usd), 0) as total_usd,
            COUNT(*) as count
-    FROM executions WHERE started_at > ? AND actual_cost_usd IS NOT NULL
+    FROM executions WHERE started_at > ? AND status = 'completed'
   `).get(weekAgo);
 
+  // Budget from schedule
+  const schedule = db.prepare('SELECT * FROM schedule WHERE id = 1').get();
+  const reservePercent = schedule?.reserve_percent || 40;
+
+  // Estimate weekly budget based on plan ($5 default, overridable)
+  const weeklyBudgetUsd = 5.00;
+  const reserved = weeklyBudgetUsd * (reservePercent / 100);
+  const available = Math.max(0, weeklyBudgetUsd - costs.total_usd - reserved);
+
   return {
-    budget,
-    agentUsed,
+    budget: weeklyBudgetUsd,
+    realCostUsd: costs.total_usd,
+    executionCount: costs.count,
     reserved,
     available,
-    usedPercent: Math.round((agentUsed / budget) * 100),
+    usedPercent: Math.round((costs.total_usd / weeklyBudgetUsd) * 100),
     reservedPercent: reservePercent,
-    availablePercent: Math.round((available / budget) * 100),
-    realCostUsd: realCosts.total_usd,
-    executionCount: realCosts.count,
+    availablePercent: Math.round((available / weeklyBudgetUsd) * 100),
   };
 }
 
 /**
- * Check if we can afford to run a task based on credit budget.
+ * Check if we can afford to run a task based on real USD spend.
  */
 function canAffordTask(task) {
-  const cost = estimateCreditCost(task);
+  const cost = estimateTaskCostUsd(task);
   const usage = getCreditUsage();
   return usage.available >= cost;
 }
@@ -93,7 +65,7 @@ function canAffordTask(task) {
 function getMaxTasksForWindow() {
   const db = getDb();
   const schedule = db.prepare('SELECT * FROM schedule WHERE id = 1').get();
-  return schedule.max_tasks_per_window || 6;
+  return schedule?.max_tasks_per_window || 6;
 }
 
 /**
@@ -101,7 +73,6 @@ function getMaxTasksForWindow() {
  */
 function getTasksExecutedThisWindow() {
   const db = getDb();
-  // Count tasks completed today
   const today = new Date().toISOString().split('T')[0];
   const result = db.prepare(`
     SELECT COUNT(*) as count FROM executions
@@ -110,19 +81,7 @@ function getTasksExecutedThisWindow() {
   return result.count;
 }
 
-/**
- * Estimate the USD cost for a task based on tier and model.
- * @param {{ tier: number, model: string }} task
- * @returns {number} Estimated cost in USD
- */
-function estimateCostUsd(task) {
-  const baseCosts = { 1: 0.05, 2: 0.15, 3: 0.10 };
-  const modelMultiplier = task.model === 'opus' ? 2.5 : 1;
-  return (baseCosts[task.tier] || 0.10) * modelMultiplier;
-}
-
 module.exports = {
-  estimateTaskCostUsd, estimateCreditCost, getCreditUsage, canAffordTask,
+  estimateTaskCostUsd, getCreditUsage, canAffordTask,
   getMaxTasksForWindow, getTasksExecutedThisWindow,
-  estimateCostUsd,
 };
