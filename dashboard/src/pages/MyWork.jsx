@@ -1,14 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApi, api } from '../hooks/useApi';
+import { useToast } from '../components/Toast';
+import { PageSkeleton } from '../components/Skeleton';
 import ChatPanel from '../components/ChatPanel';
 
 export default function MyWork() {
   const navigate = useNavigate();
   const { data, refetch } = useApi('/my-work', [], 5000);
   const [chatTask, setChatTask] = useState(null);
+  const toast = useToast();
 
-  if (!data) return <div className="px-6 py-6 text-muted animate-pulse text-sm">Loading...</div>;
+  useEffect(() => {
+    const handleEscape = () => setChatTask(null);
+    window.addEventListener('devshift:escape', handleEscape);
+    return () => window.removeEventListener('devshift:escape', handleEscape);
+  }, []);
+
+  if (!data) return <PageSkeleton cards={4} />;
 
   const { activeWork, planReviews, codeReviews, analyses, humanTasks, failed, recentlyCompleted, counts } = data;
 
@@ -39,7 +48,7 @@ export default function MyWork() {
         ) : (
           <div className="space-y-2">
             {activeWork.map(t => (
-              <ActiveWorkCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
+              <ActiveWorkCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} toast={toast} />
             ))}
           </div>
         )}
@@ -98,7 +107,7 @@ export default function MyWork() {
   );
 }
 
-function ActiveWorkCard({ task, onAction, onChat }) {
+function ActiveWorkCard({ task, onAction, onChat, toast }) {
   const [handoffNote, setHandoffNote] = useState('');
   const [acting, setActing] = useState(false);
 
@@ -106,7 +115,7 @@ function ActiveWorkCard({ task, onAction, onChat }) {
     try {
       await api(`/tasks/${task.id}/takeover`, { method: 'POST' });
     } catch (e) {
-      alert(e.message);
+      toast?.error(e.message);
     }
   };
 

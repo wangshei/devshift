@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../hooks/useApi';
+import { useToast } from './Toast';
 
 export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPushed }) {
   const [messages, setMessages] = useState([]);
@@ -9,6 +10,14 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
   const [totalCost, setTotalCost] = useState(0);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
+  const toast = useToast();
+
+  // Escape to close
+  useEffect(() => {
+    const handleEscape = () => onClose?.();
+    window.addEventListener('devshift:escape', handleEscape);
+    return () => window.removeEventListener('devshift:escape', handleEscape);
+  }, [onClose]);
 
   // Auto-scroll to bottom
   useEffect(() => {
