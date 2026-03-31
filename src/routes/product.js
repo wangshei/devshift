@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { v4: uuid } = require('uuid');
 const { getDb } = require('../db');
+const { checkForUpdate, applyUpdate, rollback } = require('../services/self-update');
 
 const router = Router();
 
@@ -138,6 +139,34 @@ router.get('/reports/unread', (req, res) => {
 router.post('/reports/:id/read', (req, res) => {
   getDb().prepare('UPDATE pm_reports SET read = 1 WHERE id = ?').run(req.params.id);
   res.json({ read: true });
+});
+
+// --- Updates ---
+router.get('/updates', async (req, res) => {
+  try {
+    const updates = await checkForUpdate();
+    res.json({ updates });
+  } catch (e) {
+    res.json({ updates: [], error: e.message });
+  }
+});
+
+router.post('/updates/:branch/apply', async (req, res) => {
+  try {
+    const result = await applyUpdate(req.params.branch);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/updates/rollback', async (req, res) => {
+  try {
+    const result = await rollback();
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = router;
