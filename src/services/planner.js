@@ -97,7 +97,19 @@ function getTasksExecutedThisWindow() {
   return result.count;
 }
 
+/**
+ * Estimate the USD cost for a task based on tier and model.
+ * @param {{ tier: number, model: string }} task
+ * @returns {number} Estimated cost in USD
+ */
+function estimateCostUsd(task) {
+  const baseCosts = { 1: 0.05, 2: 0.15, 3: 0.10 };
+  const modelMultiplier = task.model === 'opus' ? 2.5 : 1;
+  return (baseCosts[task.tier] || 0.10) * modelMultiplier;
+}
+
 module.exports = {
   estimateCreditCost, getCreditUsage, canAffordTask,
   getMaxTasksForWindow, getTasksExecutedThisWindow,
+  estimateCostUsd,
 };
