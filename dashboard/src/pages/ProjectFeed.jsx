@@ -6,6 +6,10 @@ import SplitDiffViewer from '../components/SplitDiffViewer';
 import TaskInput from '../components/TaskInput';
 import ChatPanel from '../components/ChatPanel';
 
+// ---------------------------------------------------------------------------
+// Shared helpers kept from original
+// ---------------------------------------------------------------------------
+
 function CommentThread({ taskId }) {
   const { data: comments, refetch } = useApi(`/comments/${taskId}/comments`, []);
   const [text, setText] = useState('');
@@ -54,7 +58,6 @@ function CommentThread({ taskId }) {
 function formatTime(ts) {
   if (!ts) return null;
   try {
-    // SQLite stores as "2026-03-25 14:23:00" without Z
     const d = new Date(ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z');
     if (isNaN(d.getTime())) return null;
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -63,9 +66,7 @@ function formatTime(ts) {
 
 function cleanSummary(text) {
   if (!text) return null;
-  // Strip markdown code fences
   let s = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-  // If it looks like a JSON array of tasks, extract just the count
   try {
     const parsed = JSON.parse(s.startsWith('[') ? s : s.match(/\[[\s\S]*\]/)?.[0] || '');
     if (Array.isArray(parsed) && parsed[0]?.title) {
@@ -75,71 +76,40 @@ function cleanSummary(text) {
   return s.slice(0, 300);
 }
 
-const STATUS_ICONS = {
-  done: { icon: '✓', color: 'text-success' },
-  in_progress: { icon: '●', color: 'text-accent animate-pulse' },
-  backlog: { icon: '○', color: 'text-vmuted' },
-  queued: { icon: '○', color: 'text-muted' },
-  failed: { icon: '✕', color: 'text-error' },
-  needs_review: { icon: '▸', color: 'text-warning' },
-};
+// ---------------------------------------------------------------------------
+// FeatureCard — the main building block of the new view
+// ---------------------------------------------------------------------------
 
-const TIER_LABELS = { 1: 'Auto', 2: 'Review', 3: 'Research' };
-
-function LiveLog({ taskId }) {
-  const { data } = useApi(`/tasks/${taskId}/log`, [], 2000);
-  if (!data?.log) return <p className="text-xs text-vmuted font-mono">Waiting for output...</p>;
-  return (
-    <pre className="text-[10px] font-mono text-muted leading-relaxed whitespace-pre-wrap overflow-x-auto max-h-48 overflow-y-auto bg-bg rounded p-2 border border-border">
-      {data.log}
-    </pre>
-  );
-}
-
-/** Try to parse result_summary as a JSON array of generated tasks */
-function parseGeneratedTasks(text) {
-  if (!text) return null;
-  let s = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-  try {
-    const parsed = JSON.parse(s.startsWith('[') ? s : s.match(/\[[\s\S]*\]/)?.[0] || '');
-    if (Array.isArray(parsed) && parsed[0]?.title) return parsed;
-  } catch { /* not JSON */ }
-  return null;
-}
-
-/** Format result_summary for display — full text, not truncated */
-function formatResultSummary(text) {
-  if (!text) return null;
-  let s = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-  try {
-    const parsed = JSON.parse(s.startsWith('[') ? s : s.match(/\[[\s\S]*\]/)?.[0] || '');
-    if (Array.isArray(parsed) && parsed[0]?.title) return null;
-  } catch { /* not JSON */ }
-  return s;
-}
-
-/** Expandable completed/in-progress task card */
-function TaskCard({ task, onAction, onChat }) {
+function FeatureCard({ feature, tasks, onAction, onChat }) {
   const [expanded, setExpanded] = useState(false);
+  const [actingTask, setActingTask] = useState(null);
   const [diff, setDiff] = useState(null);
-  const [loadingDiff, setLoadingDiff] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
-  const [acting, setActing] = useState(false);
-  const [showOutput, setShowOutput] = useState(false);
-  const [handoffNote, setHandoffNote] = useState('');
+  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [reviewTask, setReviewTask] = useState(null);
 
-  const s = STATUS_ICONS[task.status] || STATUS_ICONS.backlog;
-  const time = task.completed_at || task.started_at;
-  const timeStr = formatTime(time);
-  const isReview = task.status === 'needs_review' && task.branch_name;
-  const isInProgress = task.status === 'in_progress';
-  const isDone = task.status === 'done';
-  const isAnalysis = task.tier === 3 || task.title?.startsWith('Smart Mode:');
-  const isAnalysisReview = isAnalysis && task.status === 'needs_review';
+  const total = tasks.length;
+  const done = tasks.filter(t => t.status === 'done').length;
+  const inProgress = tasks.filter(t => t.status === 'in_progress').length;
+  const needsReview = tasks.filter(t => t.status === 'needs_review').length;
+  const progress = total > 0 ? Math.round((done / total) * 100) : 0;
 
-  const handleShowDiff = async () => {
-    if (diff) { setShowDiff(!showDiff); return; }
+  const statusLabel = needsReview > 0 ? 'Needs review'
+    : inProgress > 0 ? 'In progress'
+    : done === total && total > 0 ? 'Complete'
+    : 'Planned';
+
+  const statusColor = needsReview > 0 ? 'text-warning'
+    : inProgress > 0 ? 'text-accent'
+    : done === total && total > 0 ? 'text-success'
+    : 'text-vmuted';
+
+  const isComplete = done === total && total > 0 && needsReview === 0;
+
+  const handleShowDiff = async (task) => {
+    if (diff && reviewTask?.id === task.id) { setShowDiff(!showDiff); return; }
     setLoadingDiff(true);
+    setReviewTask(task);
     try {
       const d = await api(`/tasks/${task.id}/diff`);
       setDiff(d);
@@ -148,342 +118,399 @@ function TaskCard({ task, onAction, onChat }) {
     finally { setLoadingDiff(false); }
   };
 
-  const handleApprove = async () => {
-    setActing(true);
+  const handleApprove = async (taskId) => {
+    setActingTask(taskId);
     try {
-      await api(`/tasks/${task.id}/approve`, { method: 'POST' });
+      await api(`/tasks/${taskId}/approve`, { method: 'POST' });
       onAction?.();
     } catch (e) {
       alert('Merge failed: ' + e.message);
-    } finally { setActing(false); }
+    } finally { setActingTask(null); }
   };
 
-  const handleReject = async () => {
-    setActing(true);
+  const handleReject = async (taskId) => {
+    setActingTask(taskId);
     try {
-      await api(`/tasks/${task.id}/reject`, { method: 'POST' });
+      await api(`/tasks/${taskId}/reject`, { method: 'POST' });
       onAction?.();
     } catch { /* ignore */ }
-    finally { setActing(false); }
-  };
-
-  const handleDismiss = async () => {
-    setActing(true);
-    try {
-      await api(`/tasks/${task.id}/dismiss`, { method: 'POST' });
-      onAction?.();
-    } catch { /* ignore */ }
-    finally { setActing(false); }
-  };
-
-  const handleTakeover = async () => {
-    try {
-      const result = await api(`/tasks/${task.id}/takeover`, { method: 'POST' });
-      if (result.error) {
-        alert(result.error);
-      }
-    } catch (e) {
-      alert('Could not open terminal: ' + e.message);
-    }
-  };
-
-  const handleHandoff = async (done = false) => {
-    setActing(true);
-    try {
-      await api(`/tasks/${task.id}/handoff`, {
-        method: 'POST',
-        body: { note: handoffNote, done }
-      });
-      onAction?.();
-    } catch {}
-    finally { setActing(false); }
+    finally { setActingTask(null); }
   };
 
   return (
-    <div className={`bg-card border rounded-lg transition-colors ${
-      isAnalysisReview ? 'border-research/30' :
-      isReview ? 'border-warning/30' :
-      isInProgress ? 'border-accent/20' :
-      'border-border'
+    <div className={`bg-card border rounded-lg overflow-hidden transition-opacity ${isComplete ? 'opacity-60' : ''} ${
+      needsReview > 0 ? 'border-warning/30' : inProgress > 0 ? 'border-accent/20' : 'border-border'
     }`}>
-      {/* Main row */}
-      <div
-        className={`flex items-start gap-3 px-4 py-3 ${isDone || isReview ? 'cursor-pointer' : ''}`}
-        onClick={() => (isDone || isReview) && setExpanded(!expanded)}
-      >
-        <span className={`mt-0.5 text-sm shrink-0 ${isAnalysisReview ? 'text-research' : s.color}`}>
-          {isAnalysisReview ? '\u25C6' : s.icon}
-        </span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            {isAnalysisReview && (
-              <span className="text-[10px] font-mono uppercase text-research">Analysis</span>
-            )}
-            <span className="text-sm text-text">{task.title}</span>
-            {isInProgress && task.worker?.startsWith('human') && (
-              <span className="text-[10px] text-accent font-mono">you're on this</span>
-            )}
-            {isInProgress && !task.worker?.startsWith('human') && (
-              <span className="text-[10px] text-accent font-mono animate-pulse">working...</span>
-            )}
-          </div>
-          {isInProgress && !task.worker?.startsWith('human') && (
-            <div className="mt-1.5 h-0.5 w-24 bg-accent/20 rounded-full overflow-hidden">
-              <div className="h-full bg-accent rounded-full animate-pulse w-1/2" />
+      {/* Summary row */}
+      <div className="px-4 py-3 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-sm font-medium ${isComplete ? 'text-muted' : 'text-text'}`}>
+                {feature.title}
+              </span>
+              <span className={`text-[10px] font-mono ${statusColor}`}>{statusLabel}</span>
+              {needsReview > 0 && (
+                <span className="w-1.5 h-1.5 rounded-full bg-warning inline-block" />
+              )}
             </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {timeStr && <span className="text-[10px] font-mono text-vmuted">{timeStr}</span>}
-          {task.actual_minutes != null && (
-            <span className="text-[10px] font-mono text-vmuted">{task.actual_minutes}m</span>
-          )}
-          {task.actual_cost_usd != null && task.actual_cost_usd > 0 && (
-            <span className="text-[10px] font-mono text-vmuted">${task.actual_cost_usd.toFixed(2)}</span>
-          )}
-          {task.tier && (
-            <span className={`text-[10px] font-mono ${task.tier === 3 ? 'text-research' : 'text-vmuted'}`}>
-              {TIER_LABELS[task.tier]}
-            </span>
-          )}
-          {(isDone || isReview) && (
+            {/* Progress bar */}
+            <div className="flex items-center gap-2 mt-1.5">
+              <div className="flex-1 h-1.5 bg-bg rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-success rounded-full transition-all duration-500"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <span className="text-[10px] font-mono text-vmuted shrink-0">{done}/{total}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {needsReview > 0 && !expanded && (
+              <button
+                onClick={e => { e.stopPropagation(); setExpanded(true); }}
+                className="px-2.5 py-1 text-[10px] font-mono bg-warning/10 text-warning border border-warning/20 rounded-md hover:bg-warning/20 transition-colors"
+              >
+                Review ({needsReview})
+              </button>
+            )}
             <span className="text-vmuted text-xs">{expanded ? '▴' : '▾'}</span>
-          )}
+          </div>
         </div>
       </div>
 
-      {/* Human working — show handoff UI */}
-      {isInProgress && task.worker?.startsWith('human') && (
-        <div className="border-t border-border px-4 py-3 space-y-2">
-          <p className="text-[10px] text-accent font-mono">You're working on this</p>
-          <input value={handoffNote} onChange={e => setHandoffNote(e.target.value)}
-            placeholder="Leave a note for the agent (optional)"
-            className="w-full bg-bg border border-border rounded px-2 py-1.5 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent" />
-          <div className="flex gap-2">
-            <button onClick={() => handleHandoff(false)} disabled={acting}
-              className="px-3 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition-colors font-medium">
-              Hand off to agent
-            </button>
-            <button onClick={() => handleHandoff(true)} disabled={acting}
-              className="px-3 py-1.5 text-xs bg-success text-white rounded-lg hover:bg-success/80 disabled:opacity-50 transition-colors font-medium">
-              Mark done
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Live log for in-progress tasks (agent only) */}
-      {isInProgress && !task.worker?.startsWith('human') && (
-        <div className="mt-0 border-t border-border px-4 pt-2 pb-3">
-          <p className="text-[10px] text-accent font-mono mb-1 animate-pulse">● Live output</p>
-          <LiveLog taskId={task.id} />
-        </div>
-      )}
-
-      {/* Expanded details */}
+      {/* Expanded: individual tasks */}
       {expanded && (
-        <div className="border-t border-border px-4 py-3 space-y-2">
-          {/* Analysis tasks: show results prominently */}
-          {isAnalysisReview ? (
-            <>
-              {formatResultSummary(task.result_summary) && (
-                <div className="p-3 bg-bg rounded-lg border border-border">
-                  <p className="text-xs text-muted leading-relaxed whitespace-pre-wrap">
-                    {formatResultSummary(task.result_summary)}
-                  </p>
-                </div>
-              )}
-              {parseGeneratedTasks(task.result_summary) && (
-                <div className="p-3 bg-bg rounded-lg border border-border">
-                  <p className="text-[10px] font-mono text-research mb-1.5">
-                    Generated {parseGeneratedTasks(task.result_summary).length} task{parseGeneratedTasks(task.result_summary).length !== 1 ? 's' : ''}
-                  </p>
-                  <ul className="space-y-1">
-                    {parseGeneratedTasks(task.result_summary).map((t, i) => (
-                      <li key={i} className="flex items-start gap-1.5 text-xs text-muted">
-                        <span className="text-vmuted shrink-0">{'\u25CB'}</span>
-                        <span>{t.title}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {cleanSummary(task.review_instructions) && (
-                <p className="text-xs text-muted italic leading-relaxed">{cleanSummary(task.review_instructions)}</p>
-              )}
-              {task.provider && (
-                <p className="text-[10px] font-mono text-vmuted">via {task.provider}</p>
-              )}
-              <div className="flex items-center gap-2 pt-2 border-t border-border">
-                {task.branch_name && (
-                  <button onClick={handleShowDiff} disabled={loadingDiff}
-                    className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
-                    {loadingDiff ? 'Loading...' : showDiff ? 'Hide changes' : 'View changes'}
-                  </button>
-                )}
-                <button onClick={handleTakeover}
-                  className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors"
-                  title="Open this session in Terminal to continue manually">
-                  Take over
-                </button>
-                {onChat && (
-                  <button onClick={() => onChat(task)}
-                    className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
-                    Chat
-                  </button>
-                )}
-                <div className="flex-1" />
-                <button onClick={handleDismiss} disabled={acting}
-                  className="px-3 py-1.5 text-xs bg-research/90 text-white rounded-lg hover:bg-research/70 disabled:opacity-50 transition-colors font-medium">
-                  {acting ? 'Dismissing...' : 'Dismiss'}
-                </button>
-              </div>
-              <CommentThread taskId={task.id} />
-            </>
+        <div className="border-t border-border">
+          {tasks.length === 0 ? (
+            <div className="px-4 py-3 text-xs text-vmuted italic">No tasks yet.</div>
           ) : (
-            <>
-              {cleanSummary(task.result_summary) && (
-                <p className="text-xs text-muted leading-relaxed">{cleanSummary(task.result_summary)}</p>
-              )}
-              {cleanSummary(task.review_instructions) && (
-                <p className="text-xs text-muted italic leading-relaxed">{cleanSummary(task.review_instructions)}</p>
-              )}
-              {task.provider && (
-                <p className="text-[10px] font-mono text-vmuted">via {task.provider}</p>
-              )}
-              {isDone && (
-                <div>
-                  <button
-                    onClick={() => setShowOutput(!showOutput)}
-                    className="text-[10px] text-vmuted hover:text-muted font-mono transition-colors"
-                  >
-                    {showOutput ? 'Hide output' : 'View output'}
-                  </button>
-                  {showOutput && <LiveLog taskId={task.id} />}
-                </div>
-              )}
+            <div className="divide-y divide-border">
+              {tasks.map(t => {
+                const isReview = t.status === 'needs_review' && t.branch_name;
+                const isWorking = t.status === 'in_progress';
+                return (
+                  <div key={t.id} className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className={
+                        t.status === 'done' ? 'text-success text-xs' :
+                        t.status === 'in_progress' ? 'text-accent text-xs' :
+                        t.status === 'needs_review' ? 'text-warning text-xs' :
+                        t.status === 'failed' ? 'text-error text-xs' : 'text-vmuted text-xs'
+                      }>
+                        {t.status === 'done' ? '✓' :
+                         t.status === 'in_progress' ? '●' :
+                         t.status === 'needs_review' ? '▸' :
+                         t.status === 'failed' ? '✕' : '○'}
+                      </span>
+                      <span className={`flex-1 text-xs truncate ${t.status === 'done' ? 'text-muted' : 'text-text'}`}>
+                        {t.title}
+                      </span>
+                      {isWorking && (
+                        <span className="text-[10px] font-mono text-accent animate-pulse">working...</span>
+                      )}
+                      {t.actual_minutes && (
+                        <span className="text-[10px] font-mono text-vmuted">{t.actual_minutes}m</span>
+                      )}
+                    </div>
 
-              {/* Review actions for code changes (non-analysis) */}
-              {isReview && (
-                <div className="flex items-center gap-2 pt-2 border-t border-border">
-                  <button onClick={handleShowDiff} disabled={loadingDiff}
-                    className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
-                    {loadingDiff ? 'Loading...' : showDiff ? 'Hide diff' : 'View diff'}
-                  </button>
-                  <button onClick={handleTakeover}
-                    className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors"
-                    title="Open this session in Terminal to continue manually">
-                    Take over
-                  </button>
-                  {onChat && (
-                    <button onClick={() => onChat(task)}
-                      className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
-                      Chat
-                    </button>
-                  )}
-                  <div className="flex-1" />
-                  {task.pr_url && (
-                    <a href={task.pr_url} target="_blank" rel="noopener noreferrer"
-                      className="text-[10px] text-accent hover:underline shrink-0">
-                      PR #{task.pr_number}
-                    </a>
-                  )}
-                  <button onClick={handleReject} disabled={acting}
-                    className="px-3 py-1.5 text-xs text-error/70 hover:text-error border border-error/20 rounded-lg hover:bg-error/10 transition-colors">
-                    Reject
-                  </button>
-                  <button onClick={handleApprove} disabled={acting}
-                    className="px-3 py-1.5 text-xs bg-success text-white rounded-lg hover:bg-success/80 disabled:opacity-50 transition-colors font-medium">
-                    {acting ? 'Merging...' : 'Approve & Merge'}
-                  </button>
-                </div>
-              )}
+                    {/* Review actions inline */}
+                    {isReview && (
+                      <div className="flex items-center gap-2 mt-2 ml-4">
+                        <button
+                          onClick={() => handleShowDiff(t)}
+                          disabled={loadingDiff}
+                          className="px-2.5 py-1 text-[10px] bg-card border border-border rounded text-muted hover:text-text transition-colors"
+                        >
+                          {loadingDiff && reviewTask?.id === t.id ? 'Loading...' : showDiff && reviewTask?.id === t.id ? 'Hide diff' : 'View diff'}
+                        </button>
+                        {onChat && (
+                          <button
+                            onClick={() => onChat(t)}
+                            className="px-2.5 py-1 text-[10px] bg-card border border-border rounded text-muted hover:text-text transition-colors"
+                          >
+                            Chat
+                          </button>
+                        )}
+                        <div className="flex-1" />
+                        {t.pr_url && (
+                          <a href={t.pr_url} target="_blank" rel="noopener noreferrer"
+                            className="text-[10px] text-accent hover:underline">
+                            PR #{t.pr_number}
+                          </a>
+                        )}
+                        <button
+                          onClick={() => handleReject(t.id)}
+                          disabled={actingTask === t.id}
+                          className="px-2.5 py-1 text-[10px] text-error/70 hover:text-error border border-error/20 rounded hover:bg-error/10 transition-colors"
+                        >
+                          Reject
+                        </button>
+                        <button
+                          onClick={() => handleApprove(t.id)}
+                          disabled={actingTask === t.id}
+                          className="px-2.5 py-1 text-[10px] bg-success text-white rounded hover:bg-success/80 disabled:opacity-50 transition-colors font-medium"
+                        >
+                          {actingTask === t.id ? 'Merging...' : 'Approve & Merge'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
-              <CommentThread taskId={task.id} />
-            </>
+          {/* Diff viewer */}
+          {showDiff && diff && reviewTask && (
+            <SplitDiffViewer diff={diff.diff} stat={diff.stat} />
           )}
         </div>
-      )}
-
-      {/* Diff viewer */}
-      {expanded && showDiff && diff && (
-        <SplitDiffViewer diff={diff.diff} stat={diff.stat} />
       )}
     </div>
   );
 }
 
-function FailedTaskCard({ task, onRetry, onDelete, onTakeover }) {
-  const [showFull, setShowFull] = useState(false);
+// ---------------------------------------------------------------------------
+// IdeasSection
+// ---------------------------------------------------------------------------
+
+function IdeasSection({ projectId, onPromoted }) {
+  const { data: ideas, refetch } = useApi(`/product/${projectId}/ideas`, []);
+  const [text, setText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [promoting, setPromoting] = useState(null);
+
+  const handleSubmit = async () => {
+    if (!text.trim()) return;
+    setSubmitting(true);
+    try {
+      await api(`/product/${projectId}/ideas`, { method: 'POST', body: { title: text.trim() } });
+      setText('');
+      refetch();
+    } catch { /* ignore */ }
+    finally { setSubmitting(false); }
+  };
+
+  const handlePromote = async (ideaId) => {
+    setPromoting(ideaId);
+    try {
+      await api(`/product/ideas/${ideaId}/promote`, { method: 'POST' });
+      refetch();
+      onPromoted?.();
+    } catch (e) {
+      alert('Could not promote idea: ' + e.message);
+    } finally { setPromoting(null); }
+  };
+
+  const handleDelete = async (ideaId) => {
+    try {
+      await api(`/product/ideas/${ideaId}`, { method: 'DELETE' });
+      refetch();
+    } catch { /* ignore */ }
+  };
+
+  const list = Array.isArray(ideas) ? ideas : [];
 
   return (
-    <div className="bg-card border border-error/30 rounded-lg px-4 py-3 space-y-2">
-      <div className="flex items-start gap-3">
-        <span className="text-error text-sm shrink-0 mt-0.5">✕</span>
-        <div className="flex-1 min-w-0">
-          <span className="text-sm text-text">{task.title}</span>
-          {task.execution_log && (
-            <div className="mt-1">
-              <p className={`text-xs text-error/70 font-mono leading-relaxed ${showFull ? '' : 'line-clamp-2'}`}>
-                {task.execution_log}
-              </p>
-              {task.execution_log.length > 100 && (
-                <button onClick={() => setShowFull(!showFull)}
-                  className="text-[10px] text-vmuted hover:text-muted mt-0.5">
-                  {showFull ? 'Show less' : 'Show more'}
-                </button>
-              )}
-            </div>
-          )}
-          {showFull && task.review_instructions && (
-            <p className="text-xs text-muted mt-1 leading-relaxed whitespace-pre-wrap">
-              {task.review_instructions}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <button onClick={() => onTakeover(task.id)}
-            className="text-xs text-muted hover:text-accent border border-border rounded-md px-2 py-1 transition-colors"
-            title="Open in terminal">
-            Take over
-          </button>
-          <button onClick={() => onRetry(task.id)}
-            className="text-xs text-muted hover:text-accent border border-border rounded-md px-2 py-1 transition-colors">
-            Retry
-          </button>
-          <button onClick={() => onDelete(task.id)}
-            className="text-xs text-vmuted hover:text-error transition-colors px-1"
-            title="Delete task">
-            ✕
-          </button>
-        </div>
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-[10px] font-mono text-vmuted uppercase tracking-wider">Ideas</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+
+      <div className="space-y-1 mb-2">
+        {list.length === 0 && (
+          <p className="text-xs text-vmuted italic px-1">No ideas yet — capture something below.</p>
+        )}
+        {list.map(idea => (
+          <div key={idea.id} className="flex items-center gap-2 px-3 py-2 bg-card border border-border rounded-lg group">
+            <span className="text-vmuted text-xs">◌</span>
+            <span className="flex-1 text-xs text-muted">{idea.title}</span>
+            <button
+              onClick={() => handlePromote(idea.id)}
+              disabled={promoting === idea.id}
+              className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] font-mono text-accent border border-accent/30 rounded hover:bg-accent/10 transition-all disabled:opacity-40"
+              title="Promote to feature"
+            >
+              {promoting === idea.id ? '...' : '+ feature'}
+            </button>
+            <button
+              onClick={() => handleDelete(idea.id)}
+              className="opacity-0 group-hover:opacity-100 text-vmuted hover:text-error text-xs transition-all"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* Quick add */}
+      <div className="flex gap-2">
+        <input
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+          placeholder="Capture an idea..."
+          className="flex-1 bg-bg border border-border rounded px-3 py-1.5 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent"
+        />
+        <button
+          onClick={handleSubmit}
+          disabled={submitting || !text.trim()}
+          className="px-3 py-1.5 text-xs text-accent hover:text-text disabled:opacity-40 transition-colors border border-border rounded"
+        >
+          Add
+        </button>
       </div>
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// StatusSummary — "What's happening" section
+// ---------------------------------------------------------------------------
+
+function StatusSummary({ features, tasks, goals }) {
+  const inProgressTasks = tasks.filter(t => t.status === 'in_progress');
+  const needsReviewTasks = tasks.filter(t => t.status === 'needs_review');
+  const completedThisWeek = (() => {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return tasks.filter(t => {
+      if (t.status !== 'done' || !t.completed_at) return false;
+      try {
+        const d = new Date(t.completed_at.includes('T') ? t.completed_at : t.completed_at.replace(' ', 'T') + 'Z');
+        return d.getTime() > weekAgo;
+      } catch { return false; }
+    });
+  })();
+
+  const completedFeatures = features.filter(f => {
+    const fTasks = tasks.filter(t => t.feature_id === f.id);
+    return fTasks.length > 0 && fTasks.every(t => t.status === 'done');
+  });
+
+  let primary = '';
+  let secondary = '';
+
+  if (inProgressTasks.length > 0) {
+    const activeFeature = features.find(f => inProgressTasks.some(t => t.feature_id === f.id));
+    primary = activeFeature
+      ? `Agent is working on ${activeFeature.title}.`
+      : `Agent is running ${inProgressTasks.length} task${inProgressTasks.length !== 1 ? 's' : ''}.`;
+  } else if (needsReviewTasks.length > 0) {
+    primary = `${needsReviewTasks.length} item${needsReviewTasks.length !== 1 ? 's' : ''} waiting for your review.`;
+  } else if (completedThisWeek.length > 0) {
+    primary = `All caught up.`;
+    secondary = `${completedThisWeek.length} task${completedThisWeek.length !== 1 ? 's' : ''} completed this week.`;
+  } else {
+    primary = 'No active work.';
+    secondary = 'Add a task below to get started.';
+  }
+
+  if (!secondary && needsReviewTasks.length > 0 && inProgressTasks.length > 0) {
+    secondary = `${needsReviewTasks.length} item${needsReviewTasks.length !== 1 ? 's' : ''} need your review.`;
+  }
+
+  const goalList = Array.isArray(goals) ? goals : [];
+
+  return (
+    <div className="bg-card border border-border rounded-lg px-4 py-3 space-y-2">
+      <div>
+        <p className="text-sm text-text font-medium">{primary}</p>
+        {secondary && <p className="text-xs text-muted mt-0.5">{secondary}</p>}
+      </div>
+      {goalList.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 pt-1 border-t border-border">
+          {goalList.map(g => (
+            <span key={g.id} className="text-[10px] px-2 py-0.5 bg-accent/10 text-accent rounded-full font-mono">
+              {g.title || g.text || g.description}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main export
+// ---------------------------------------------------------------------------
 
 export default function ProjectFeed() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data, refetch } = useApi(`/timeline/project/${id}`, [], 5000);
+
+  // Core data
+  const { data: timelineData, refetch: refetchTimeline } = useApi(`/timeline/project/${id}`, [], 5000);
+  const { data: features, refetch: refetchFeatures } = useApi(`/product/${id}/features`, []);
+  const { data: goals } = useApi(`/product/${id}/goals`, []);
+
   const [renamingName, setRenamingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
   const [chatTask, setChatTask] = useState(null);
 
-  if (!data) return (
+  const refetch = () => { refetchTimeline(); refetchFeatures(); };
+
+  if (!timelineData) return (
     <div className="px-6 py-6">
       <div className="text-muted animate-pulse text-sm">Loading...</div>
     </div>
   );
 
-  const { project, humanTasks, completed, inProgress, planned, failed } = data;
-  const isEmpty = !humanTasks?.length && !inProgress?.length && !completed?.length && !planned?.length && !failed?.length;
+  const { project, humanTasks } = timelineData;
 
-  const handleRenameStart = () => {
-    setNameValue(project.name);
-    setRenamingName(true);
-  };
+  // Flatten all tasks from timeline into a single array
+  const allTasks = [
+    ...(timelineData.inProgress || []),
+    ...(timelineData.completed || []),
+    ...(timelineData.planned || []),
+    ...(timelineData.failed || []),
+    ...(timelineData.humanTasks || []),
+  ];
 
+  const featureList = Array.isArray(features) ? features : (features?.features ?? []);
+  const goalList = Array.isArray(goals) ? goals : (goals?.goals ?? []);
+
+  // Group tasks by feature
+  const tasksByFeature = {};
+  const orphanTasks = [];
+  for (const task of allTasks) {
+    if (task.feature_id) {
+      if (!tasksByFeature[task.feature_id]) tasksByFeature[task.feature_id] = [];
+      tasksByFeature[task.feature_id].push(task);
+    } else {
+      orphanTasks.push(task);
+    }
+  }
+
+  // Orphaned reviews: needs_review tasks with no feature
+  const orphanReviews = orphanTasks.filter(t => t.status === 'needs_review');
+  // Human tasks: task_type === 'human'
+  const humanTaskItems = (humanTasks || []).filter(t => t.task_type === 'human' || t.plan_status === 'pending_review');
+
+  // Attention items: humanTaskItems + orphanReviews not already in humanTasks
+  const humanTaskIds = new Set((humanTasks || []).map(t => t.id));
+  const attentionItems = [
+    ...(humanTasks || []),
+    ...orphanReviews.filter(t => !humanTaskIds.has(t.id)),
+  ];
+
+  // Sort features: incomplete/in-progress first, complete last
+  const sortedFeatures = [...featureList].sort((a, b) => {
+    const aTasks = tasksByFeature[a.id] || [];
+    const bTasks = tasksByFeature[b.id] || [];
+    const aDone = aTasks.length > 0 && aTasks.every(t => t.status === 'done');
+    const bDone = bTasks.length > 0 && bTasks.every(t => t.status === 'done');
+    if (aDone && !bDone) return 1;
+    if (!aDone && bDone) return -1;
+    return 0;
+  });
+
+  const hasFeatures = featureList.length > 0 || Object.keys(tasksByFeature).length > 0;
+
+  // Handle rename
+  const handleRenameStart = () => { setNameValue(project.name); setRenamingName(true); };
   const handleRenameCommit = async () => {
     const trimmed = nameValue.trim();
     if (trimmed && trimmed !== project.name) {
@@ -491,27 +518,6 @@ export default function ProjectFeed() {
       refetch();
     }
     setRenamingName(false);
-  };
-
-  const handleDeleteTask = async (taskId) => {
-    await api(`/tasks/${taskId}`, { method: 'DELETE' });
-    refetch();
-  };
-
-  const handleRetryTask = async (taskId) => {
-    await api(`/tasks/${taskId}/execute`, { method: 'POST' });
-    refetch();
-  };
-
-  const handleTakeoverTask = async (taskId) => {
-    try {
-      const result = await api(`/tasks/${taskId}/takeover`, { method: 'POST' });
-      if (result.error) {
-        alert(result.error);
-      }
-    } catch (e) {
-      alert('Could not open terminal: ' + e.message);
-    }
   };
 
   const handleDelete = async () => {
@@ -581,102 +587,72 @@ export default function ProjectFeed() {
         </div>
       </div>
 
-      {/* Feed content */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 pb-32">
+      {/* Main scrollable content */}
+      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5 pb-32">
 
-        {/* Reviews banner */}
-        {humanTasks?.length > 0 && (
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-warning" />
-              <h2 className="text-xs font-mono text-warning uppercase tracking-wider">
-                Needs your attention ({humanTasks.length})
-              </h2>
-            </div>
-            <div className="flex flex-col gap-2">
-              {humanTasks.map(t => <HumanTaskCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />)}
-            </div>
-          </div>
-        )}
+        {/* Section 1: What's happening */}
+        <StatusSummary
+          features={featureList}
+          tasks={allTasks}
+          goals={goalList}
+        />
 
-        {/* In-progress tasks */}
-        {inProgress?.length > 0 && (
-          <div className="flex flex-col gap-2">
-            {inProgress.map(t => (
-              <TaskCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
-            ))}
-          </div>
-        )}
-
-        {/* Completed tasks */}
-        {completed?.length > 0 && (
+        {/* Section 2: Features */}
+        {hasFeatures && (
           <div>
             <div className="flex items-center gap-2 mb-2">
               <div className="h-px flex-1 bg-border" />
-              <span className="text-[10px] font-mono text-vmuted">
-                {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} — {completed.length} completed
-              </span>
+              <span className="text-[10px] font-mono text-vmuted uppercase tracking-wider">Features</span>
               <div className="h-px flex-1 bg-border" />
             </div>
             <div className="flex flex-col gap-2">
-              {completed.map(t => (
-                <TaskCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Queued/planned */}
-        {planned?.length > 0 && (
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <div className="h-px flex-1 bg-border" />
-              <span className="text-[10px] font-mono text-vmuted">Up next ({planned.length})</span>
-              <div className="h-px flex-1 bg-border" />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              {planned.map(t => (
-                <div key={t.id} className="relative flex items-center gap-3 px-4 py-2.5 bg-card border border-border rounded-lg group">
-                  <span className="text-vmuted text-sm">○</span>
-                  <span className="text-sm text-muted flex-1">{t.title}</span>
-                  {t.tier && (
-                    <span className={`text-[10px] font-mono ${t.tier === 3 ? 'text-research' : 'text-vmuted'}`}>
-                      {TIER_LABELS[t.tier]}
-                    </span>
-                  )}
-                  <button onClick={() => handleDeleteTask(t.id)} className="opacity-0 group-hover:opacity-100 text-vmuted hover:text-error text-xs transition-all ml-2">✕</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Failed tasks */}
-        {failed?.length > 0 && (
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-error" />
-              <h2 className="text-xs font-mono text-error uppercase tracking-wider">
-                Failed ({failed.length})
-              </h2>
-            </div>
-            <div className="flex flex-col gap-2">
-              {failed.map(t => (
-                <FailedTaskCard
-                  key={t.id}
-                  task={t}
-                  onRetry={handleRetryTask}
-                  onDelete={handleDeleteTask}
-                  onTakeover={handleTakeoverTask}
+              {sortedFeatures.map(feature => (
+                <FeatureCard
+                  key={feature.id}
+                  feature={feature}
+                  tasks={tasksByFeature[feature.id] || []}
+                  onAction={refetch}
+                  onChat={setChatTask}
                 />
               ))}
+
+              {/* "Other tasks" — tasks with no feature_id, excluding reviews/human tasks shown below */}
+              {orphanTasks.filter(t => t.status !== 'needs_review' && t.task_type !== 'human').length > 0 && (
+                <FeatureCard
+                  key="__other__"
+                  feature={{ id: '__other__', title: 'Other tasks' }}
+                  tasks={orphanTasks.filter(t => t.status !== 'needs_review' && t.task_type !== 'human')}
+                  onAction={refetch}
+                  onChat={setChatTask}
+                />
+              )}
             </div>
           </div>
         )}
 
-        {/* Empty state */}
-        {isEmpty && (
-          <div className="text-center py-16">
+        {/* Section 3: Needs your attention */}
+        {attentionItems.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" />
+              <h2 className="text-xs font-mono text-warning uppercase tracking-wider">
+                Needs your attention ({attentionItems.length})
+              </h2>
+            </div>
+            <div className="flex flex-col gap-2">
+              {attentionItems.map(t => (
+                <HumanTaskCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Section 4: Ideas */}
+        <IdeasSection projectId={id} onPromoted={refetch} />
+
+        {/* Empty state (no features and no tasks) */}
+        {!hasFeatures && allTasks.length === 0 && attentionItems.length === 0 && (
+          <div className="text-center py-12">
             <p className="text-muted text-sm mb-1">No tasks for {project.name} yet.</p>
             <p className="text-vmuted text-xs">Add a task below to get started.</p>
           </div>
