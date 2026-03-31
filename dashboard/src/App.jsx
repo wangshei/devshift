@@ -8,6 +8,7 @@ import Settings from './pages/Settings';
 import Setup from './pages/Setup';
 import Timeline from './pages/Timeline';
 import MyWork from './pages/MyWork';
+import ProductMap from './pages/ProductMap';
 import ThemeToggle from './components/ThemeToggle';
 
 function App() {
@@ -60,6 +61,7 @@ function App() {
             <Route path="/my-work" element={<MyWork />} />
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/product-map" element={<ProductMap />} />
           </Routes>
         </main>
       </div>
@@ -73,6 +75,7 @@ function App() {
             <Route path="/my-work" element={<MyWork />} />
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/product-map" element={<ProductMap />} />
           </Routes>
         </main>
         <MobileBottomNav />
