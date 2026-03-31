@@ -33,35 +33,20 @@ function needsImprovement(title, description, meta) {
   // Never re-decompose tasks that already have subtasks
   if (meta && meta.subtaskCount && meta.subtaskCount > 0) return false;
 
-  // Never improve parent tasks that were already decomposed
+  // Never decompose subtasks (they came from a prior decomposition)
   if (meta && meta.parent_task_id) return false;
 
-  // Tier 3 (research) tasks are intentionally open-ended
-  if (meta && meta.tier === 3) return false;
+  // Tier 1 and 3 tasks don't need decomposition — they're focused
+  if (meta && (meta.tier === 1 || meta.tier === 3)) return false;
 
-  // Detailed descriptions with file paths are already actionable
-  if (description && description.length > 200 && FILE_PATH_PATTERN.test(description)) return false;
+  // If description exists and is meaningful (>100 chars), the task is specific enough
+  if (description && description.length > 100) return false;
 
-  // --- Triggers ---
+  // Only decompose truly vague tasks: short title + no description
+  if (title.length < 20 && (!description || description.length < 30)) return true;
 
-  // Short titles
-  if (title.length < 30) return true;
-
-  // No action verb at all
-  if (!/\b(add|fix|update|create|implement|remove|refactor|test|write|build|improve|change|move|rename|migrate|extract|replace|delete|configure|set up|integrate)\b/i.test(title)) return true;
-
-  // Vague action words without specifics (no file path in title or description)
-  if (VAGUE_WORDS.test(title)) {
-    const combinedText = `${title} ${description || ''}`;
-    if (!FILE_PATH_PATTERN.test(combinedText)) return true;
-  }
-
-  // Empty or very short description
-  if (!description || description.length < 50) return true;
-
-  // No file paths mentioned anywhere
-  const combinedText = `${title} ${description || ''}`;
-  if (!FILE_PATH_PATTERN.test(combinedText)) return true;
+  // No action verb AND no description — too vague
+  if (!/\b(add|fix|update|create|implement|remove|refactor|test|write|build|improve|change|move|rename|migrate|extract|replace|delete|configure|set up|integrate)\b/i.test(title) && (!description || description.length < 50)) return true;
 
   return false;
 }
