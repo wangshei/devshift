@@ -41,7 +41,11 @@ router.delete('/goals/:id', (req, res) => {
 router.get('/:projectId/features', (req, res) => {
   const db = getDb();
   const features = db.prepare('SELECT * FROM features WHERE project_id = ? ORDER BY status, priority ASC').all(req.params.projectId);
-  res.json(features);
+  const taskCounts = db.prepare(
+    "SELECT feature_id, COUNT(*) as total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done FROM tasks WHERE project_id = ? AND feature_id IS NOT NULL GROUP BY feature_id"
+  ).all(req.params.projectId);
+  const countMap = Object.fromEntries(taskCounts.map(r => [r.feature_id, { total: r.total, done: r.done }]));
+  res.json(features.map(f => ({ ...f, tasks_total: countMap[f.id]?.total || 0, tasks_done: countMap[f.id]?.done || 0 })));
 });
 
 router.post('/:projectId/features', (req, res) => {
