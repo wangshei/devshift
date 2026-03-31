@@ -11,6 +11,45 @@ import Timeline from './pages/Timeline';
 import MyWork from './pages/MyWork';
 import ThemeToggle from './components/ThemeToggle';
 
+function KeyboardShortcuts() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') {
+        window.dispatchEvent(new CustomEvent('devshift:escape'));
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) {
+        if (e.key === 'k') { e.preventDefault(); document.querySelector('input[placeholder*="task"], input[placeholder*="Describe"]')?.focus(); return; }
+        if (e.key === '1') { e.preventDefault(); navigate('/'); return; }
+        if (e.key === '2') { e.preventDefault(); navigate('/my-work'); return; }
+        if (e.key === '3') { e.preventDefault(); navigate('/timeline'); return; }
+        if (e.key === '4') { e.preventDefault(); navigate('/settings'); return; }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [navigate]);
+
+  return null;
+}
+
+function AnimatedRoutes() {
+  const location = useLocation();
+  return (
+    <div key={location.pathname} className="animate-fade-in">
+      <Routes location={location}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/project/:id" element={<ProjectFeed />} />
+        <Route path="/my-work" element={<MyWork />} />
+        <Route path="/timeline" element={<Timeline />} />
+        <Route path="/settings" element={<Settings />} />
+      </Routes>
+    </div>
+  );
+}
+
 function App() {
   const [needsSetup, setNeedsSetup] = useState(null);
 
@@ -51,35 +90,26 @@ function App() {
 
   return (
     <BrowserRouter>
-      {/* Desktop: sidebar + main content */}
-      <div className="hidden md:flex h-screen overflow-hidden">
-        <Sidebar />
-        <main className="flex-1 overflow-y-auto bg-bg">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/project/:id" element={<ProjectFeed />} />
-            <Route path="/my-work" element={<MyWork />} />
-            <Route path="/timeline" element={<Timeline />} />
-            <Route path="/settings" element={<Settings />} />
-          </Routes>
-        </main>
-      </div>
+      <ToastProvider>
+        <KeyboardShortcuts />
+        {/* Desktop: sidebar + main content */}
+        <div className="hidden md:flex h-screen overflow-hidden">
+          <Sidebar />
+          <main className="flex-1 overflow-y-auto bg-bg">
+            <AnimatedRoutes />
+          </main>
+        </div>
 
-      {/* Mobile: full screen with bottom nav */}
-      <div className="md:hidden flex flex-col min-h-screen bg-bg">
-        <main className="flex-1 overflow-y-auto pb-16">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/project/:id" element={<ProjectFeed />} />
-            <Route path="/my-work" element={<MyWork />} />
-            <Route path="/timeline" element={<Timeline />} />
-            <Route path="/settings" element={<Settings />} />
-          </Routes>
-        </main>
-        <MobileBottomNav />
-      </div>
+        {/* Mobile: full screen with bottom nav */}
+        <div className="md:hidden flex flex-col min-h-screen bg-bg">
+          <main className="flex-1 overflow-y-auto pb-16">
+            <AnimatedRoutes />
+          </main>
+          <MobileBottomNav />
+        </div>
 
-      <ThemeToggle />
+        <ThemeToggle />
+      </ToastProvider>
     </BrowserRouter>
   );
 }

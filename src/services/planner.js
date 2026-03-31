@@ -58,6 +58,18 @@ function getCreditUsage() {
 const estimateCostUsd = estimateTaskCostUsd;
 
 /**
+ * Estimate approximate USD cost for a task based on tier and model.
+ * Opus tasks cost ~3x more than sonnet; these are rough estimates.
+ * @param {{ tier: number, model?: string }} task
+ * @returns {number} estimated cost in USD
+ */
+function estimateUsdCost(task) {
+  const baseCosts = { 1: 0.05, 2: 0.20, 3: 0.10 };
+  const modelMultiplier = task.model === 'opus' ? 3 : 1;
+  return (baseCosts[task.tier] || 0.10) * modelMultiplier;
+}
+
+/**
  * @deprecated Use estimateCostUsd() instead.
  */
 function estimateCreditCost(task) {
@@ -96,6 +108,6 @@ function getTasksExecutedThisWindow() {
 }
 
 module.exports = {
-  estimateTaskCostUsd, estimateCostUsd, estimateCreditCost, getCreditUsage, canAffordTask,
+  estimateTaskCostUsd, estimateCostUsd, estimateCreditCost, estimateUsdCost, getCreditUsage, canAffordTask,
   getMaxTasksForWindow, getTasksExecutedThisWindow,
 };

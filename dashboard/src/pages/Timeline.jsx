@@ -85,8 +85,23 @@ export default function Timeline() {
 
       {/* Loading */}
       {loading && (
-        <div className="text-center py-12 text-muted text-sm font-mono animate-pulse">
-          Loading...
+        <div className="space-y-4 py-4">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="h-px flex-1 bg-border" />
+                <div className="h-3 w-20 bg-border/50 rounded animate-pulse" />
+                <div className="h-px flex-1 bg-border" />
+              </div>
+              {[1, 2].map(j => (
+                <div key={j} className="flex items-center gap-3 px-3 py-2.5">
+                  <div className="w-2 h-2 rounded-full bg-border/50 animate-pulse" />
+                  <div className="h-3 bg-border/50 rounded animate-pulse flex-1 max-w-[200px]" />
+                  <div className="h-3 w-16 bg-border/50 rounded animate-pulse" />
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
       )}
 

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApi, api } from '../hooks/useApi';
+import { useToast } from './Toast';
 import SplitDiffViewer from './SplitDiffViewer';
 
 const TIER_LABELS = { 1: 'Auto', 2: 'Review', 3: 'Research' };

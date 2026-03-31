@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../hooks/useApi';
+import { useToast } from './Toast';
 
 export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPushed }) {
   const [messages, setMessages] = useState([]);
