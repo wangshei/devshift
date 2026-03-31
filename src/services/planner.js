@@ -2,6 +2,19 @@ const { getDb } = require('../db');
 const log = require('../utils/logger');
 
 /**
+ * Estimate the USD cost of running a task based on tier and model/provider.
+ * @param {{ tier?: number, model?: string, provider?: string }} task
+ * @returns {number} Estimated cost in USD
+ */
+function estimateTaskCostUsd(task) {
+  const isOpus = ((task.model || '') + (task.provider || '')).includes('opus');
+  const costs = isOpus
+    ? { 1: 0.10, 2: 0.20, 3: 0.15 }
+    : { 1: 0.03, 2: 0.06, 3: 0.04 };
+  return costs[task.tier] || costs[1];
+}
+
+/**
  * Estimate credit cost for a task based on tier and model.
  * Returns a rough percentage of weekly credits.
  */
@@ -98,6 +111,6 @@ function getTasksExecutedThisWindow() {
 }
 
 module.exports = {
-  estimateCreditCost, getCreditUsage, canAffordTask,
+  estimateTaskCostUsd, estimateCreditCost, getCreditUsage, canAffordTask,
   getMaxTasksForWindow, getTasksExecutedThisWindow,
 };
