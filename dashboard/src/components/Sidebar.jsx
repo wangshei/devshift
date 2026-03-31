@@ -96,7 +96,7 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { data: dashData, refetch: refetchDash } = useApi('/timeline/dashboard', [], 8000);
-  const { data: myWorkData } = useApi('/my-work', null, 10000);
+  const { data: myWorkData } = useApi('/my-work', [], 10000);
   const attentionCount = myWorkData?.counts?.needsAttention || 0;
 
   const [showAddProject, setShowAddProject] = useState(false);

@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 
 const BASE = '/api';
 
-export function useApi(path, deps = [], pollInterval = 0) {
+export function useApi(path, deps, pollInterval = 0) {
+  if (!Array.isArray(deps)) deps = [];
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);

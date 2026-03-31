@@ -73,13 +73,70 @@ function addSystemMemory(category, content, sourceProjectId = null, sourceTaskId
 }
 
 /**
- * Get all memories for a project (for injecting into prompts).
+ * Get all memories for a project — used in admin/settings views.
+ * Renamed from getProjectMemories() to make the tiered API the default.
  */
-function getProjectMemories(projectId) {
+function getAllProjectMemories(projectId) {
   const db = getDb();
   return db.prepare(
     'SELECT * FROM project_memory WHERE project_id = ? ORDER BY category, updated_at DESC'
   ).all(projectId);
+}
+
+/**
+ * Get WORKING memory for a project — recent, high-signal memories always loaded into prompts.
+ * This stays small: only memories from last 48 hours + consolidated patterns.
+ */
+function getWorkingMemory(projectId) {
+  const db = getDb();
+  const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+  // Working tier: recent memories + all patterns (consolidated insights are always relevant)
+  return db.prepare(`
+    SELECT * FROM project_memory
+    WHERE project_id = ? AND (
+      memory_tier = 'working' AND updated_at > ?
+      OR category = 'patterns'
+      OR category = 'preferences'
+    )
+    ORDER BY category, updated_at DESC
+  `).all(projectId, twoDaysAgo);
+}
+
+/**
+ * Get LONG-TERM memory by keyword search — for specific context retrieval.
+ * Only called when the agent needs to look something up.
+ */
+function searchMemory(projectId, query, limit = 10) {
+  const db = getDb();
+  // SQLite LIKE-based search (good enough for local use)
+  const keywords = query.toLowerCase().split(/\s+/).filter(k => k.length > 2);
+  if (keywords.length === 0) return [];
+
+  const conditions = keywords.map(() => 'LOWER(content) LIKE ?').join(' AND ');
+  const params = keywords.map(k => `%${k}%`);
+
+  return db.prepare(`
+    SELECT * FROM project_memory
+    WHERE project_id = ? AND ${conditions}
+    ORDER BY updated_at DESC LIMIT ?
+  `).all(projectId, ...params, limit);
+}
+
+/**
+ * Get working system memories — consolidated cross-project lessons.
+ */
+function getWorkingSystemMemory() {
+  const db = getDb();
+  const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+  return db.prepare(`
+    SELECT * FROM system_memory
+    WHERE memory_tier = 'working' AND updated_at > ?
+       OR category = 'prompt_lessons'
+       OR category = 'user_preferences'
+    ORDER BY category, updated_at DESC
+  `).all(twoDaysAgo);
 }
 
 /**
@@ -107,8 +164,13 @@ function formatMemoriesForPrompt(memories, label = 'Learnings') {
   let result = `\n## ${label}\n`;
   for (const [cat, items] of Object.entries(grouped)) {
     result += `\n### ${cat.replace(/_/g, ' ')}\n`;
-    for (const item of items.slice(0, 5)) { // Max 5 per category to keep prompt reasonable
+    // Limit per category: patterns/preferences get 5, others get 3
+    const limit = (cat === 'patterns' || cat === 'preferences') ? 5 : 3;
+    for (const item of items.slice(0, limit)) {
       result += `- ${item}\n`;
+    }
+    if (items.length > limit) {
+      result += `- _(${items.length - limit} more in long-term memory)_\n`;
     }
   }
   return result;
@@ -287,6 +349,26 @@ function pruneMemories() {
     WHERE completed_at < ? AND LENGTH(output) > 500
   `).run(sevenDaysAgo);
 
+  // 5. Archive old working memories to long-term (older than 48 hours, except patterns/preferences)
+  const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const archived = db.prepare(`
+    UPDATE project_memory SET memory_tier = 'long_term'
+    WHERE memory_tier = 'working'
+      AND updated_at < ?
+      AND category NOT IN ('patterns', 'preferences')
+  `).run(twoDaysAgo);
+  if (archived.changes > 0) {
+    log.info(`[Memory] Archived ${archived.changes} memories to long-term`);
+  }
+
+  // Same for system memory
+  db.prepare(`
+    UPDATE system_memory SET memory_tier = 'long_term'
+    WHERE memory_tier = 'working'
+      AND updated_at < ?
+      AND category NOT IN ('prompt_lessons', 'user_preferences')
+  `).run(twoDaysAgo);
+
   if (pruned > 0) {
     log.info(`[Memory] Pruned ${pruned} old memories`);
   }
@@ -341,7 +423,8 @@ Return JSON only:
 
 module.exports = {
   addProjectMemory, addSystemMemory,
-  getProjectMemories, getSystemMemories,
+  getWorkingMemory, getWorkingSystemMemory, searchMemory,
+  getAllProjectMemories, getSystemMemories,
   formatMemoriesForPrompt,
   learnFromTask, consolidateMemories,
   pruneMemories,

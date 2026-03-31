@@ -86,7 +86,7 @@ function App() {
 function MobileBottomNav() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { data: myWorkData } = useApi('/my-work', null, 10000);
+  const { data: myWorkData } = useApi('/my-work', [], 10000);
   const attentionCount = myWorkData?.counts?.needsAttention || 0;
 
   return (

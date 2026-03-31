@@ -36,4 +36,11 @@ router.delete('/system/:id', (req, res) => {
   res.json({ deleted: true });
 });
 
+// GET /api/memory/search/:projectId?q=keyword — search long-term memory
+router.get('/search/:projectId', (req, res) => {
+  const { searchMemory } = require('../services/memory');
+  const results = searchMemory(req.params.projectId, req.query.q || '', 20);
+  res.json(results);
+});
+
 module.exports = router;

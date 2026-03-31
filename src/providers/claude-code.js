@@ -69,9 +69,9 @@ function gatherContext(project, task) {
   // 6. Load project memories (learnings from past tasks)
   let projectMemories = '';
   try {
-    const { getProjectMemories, formatMemoriesForPrompt } = require('../services/memory');
-    const memories = getProjectMemories(project.id);
-    projectMemories = formatMemoriesForPrompt(memories, 'Project Learnings');
+    const { getWorkingMemory, formatMemoriesForPrompt } = require('../services/memory');
+    const memories = getWorkingMemory(project.id);
+    projectMemories = formatMemoriesForPrompt(memories, 'Project Learnings (Working Memory)');
   } catch { /* memory service not available */ }
 
   return { claudeMd, packageScripts, directoryTree, recentGitLog, referencedFileContents, projectMemories };

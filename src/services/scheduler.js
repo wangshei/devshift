@@ -242,6 +242,14 @@ async function tick() {
     } catch (e) {
       log.debug(`[GitWatch] ${e.message}`);
     }
+
+    // --- PM REPORTS: periodic status updates ---
+    try {
+      const { generateAllReports } = require('./pm-report');
+      await generateAllReports();
+    } catch (e) {
+      log.debug(`[PMReport] ${e.message}`);
+    }
   } catch (e) {
     log.error(`Scheduler error: ${e.message}`);
   } finally {

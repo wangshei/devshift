@@ -30,6 +30,7 @@ app.use('/api/setup', require('./routes/setup'));
 app.use('/api/comments', require('./routes/comments'));
 app.use('/api/memory', require('./routes/memory'));
 app.use('/api/chat', require('./routes/chat'));
+app.use('/api/product', require('./routes/product'));
 
 // Memory stats endpoint
 app.get('/api/memory/stats', (req, res) => {
@@ -158,6 +159,14 @@ app.get('*', (req, res, next) => {
 
 // Run migrations on startup
 migrate();
+
+// Seed agents for existing projects
+try {
+  const { seedAgentsForProject } = require('./services/agents');
+  const db = require('./db').getDb();
+  const projects = db.prepare('SELECT id FROM projects').all();
+  for (const p of projects) seedAgentsForProject(p.id);
+} catch {}
 
 // Auto-detect providers on startup
 const { detectProviders } = require('./providers');

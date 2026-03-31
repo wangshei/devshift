@@ -39,6 +39,12 @@ router.post('/', (req, res) => {
     preferences ? JSON.stringify(preferences) : null, priority || 5);
 
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+
+  try {
+    const { seedAgentsForProject } = require('../services/agents');
+    seedAgentsForProject(id);
+  } catch {}
+
   res.status(201).json(project);
 });
 
@@ -162,6 +168,12 @@ router.post('/from-path', (req, res) => {
   `).run(id, name, cleanPath, githubRemote, context);
 
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+
+  try {
+    const { seedAgentsForProject } = require('../services/agents');
+    seedAgentsForProject(id);
+  } catch {}
+
   res.status(201).json(project);
 });
 
@@ -188,6 +200,12 @@ router.post('/create-new', async (req, res) => {
     const id = uuid();
     db.prepare('INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)').run(id, name, projectPath);
     const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+
+    try {
+      const { seedAgentsForProject } = require('../services/agents');
+      seedAgentsForProject(id);
+    } catch {}
+
     res.status(201).json(project);
   } catch (e) {
     res.status(500).json({ error: e.message });

@@ -5,7 +5,7 @@ import ChatPanel from '../components/ChatPanel';
 
 export default function MyWork() {
   const navigate = useNavigate();
-  const { data, refetch } = useApi('/my-work', null, 5000);
+  const { data, refetch } = useApi('/my-work', [], 5000);
   const [chatTask, setChatTask] = useState(null);
 
   if (!data) return <div className="px-6 py-6 text-muted animate-pulse text-sm">Loading...</div>;

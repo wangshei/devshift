@@ -122,9 +122,9 @@ async function improvePrompt(taskId) {
   // Load project memories for PM context
   let memoryContext = '';
   try {
-    const { getProjectMemories, getSystemMemories, formatMemoriesForPrompt } = require('./memory');
-    const projMem = getProjectMemories(project.id);
-    const sysMem = getSystemMemories();
+    const { getWorkingMemory, getWorkingSystemMemory, formatMemoriesForPrompt } = require('./memory');
+    const projMem = getWorkingMemory(project.id);
+    const sysMem = getWorkingSystemMemory();
     memoryContext = formatMemoriesForPrompt(projMem, 'Project Learnings') +
                     formatMemoriesForPrompt(sysMem.slice(0, 10), 'System-wide Lessons');
   } catch { /* memory not available */ }

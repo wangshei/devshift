@@ -231,6 +231,126 @@ function migrate() {
     database.exec("ALTER TABLE schedule ADD COLUMN log_retention_days INTEGER DEFAULT 7");
   }
 
+  // === Product OS tables ===
+
+  // Goals: the "why" behind features (e.g., "increase retention by 20%")
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS goals (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      title TEXT NOT NULL,
+      description TEXT,
+      metric TEXT,
+      target_value TEXT,
+      current_value TEXT,
+      status TEXT DEFAULT 'active',
+      deadline TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Features: the "what" that serves a goal (e.g., "onboarding flow")
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS features (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      goal_id TEXT REFERENCES goals(id),
+      title TEXT NOT NULL,
+      description TEXT,
+      status TEXT DEFAULT 'idea',
+      priority INTEGER DEFAULT 5,
+      assumptions TEXT,
+      outcome TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Link tasks to features
+  const taskCols3 = database.prepare("PRAGMA table_info(tasks)").all();
+  if (!taskCols3.find(c => c.name === 'feature_id')) {
+    database.exec("ALTER TABLE tasks ADD COLUMN feature_id TEXT REFERENCES features(id)");
+  }
+
+  // Sprints: time-boxed work periods
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS sprints (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      title TEXT NOT NULL,
+      goal TEXT,
+      start_date TEXT,
+      end_date TEXT,
+      status TEXT DEFAULT 'planning',
+      retrospective TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Link tasks to sprints
+  if (!taskCols3.find(c => c.name === 'sprint_id')) {
+    database.exec("ALTER TABLE tasks ADD COLUMN sprint_id TEXT REFERENCES sprints(id)");
+  }
+
+  // Agent profiles: each agent has identity, expertise, and history
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      description TEXT,
+      avatar TEXT,
+      provider TEXT DEFAULT 'claude_code',
+      model TEXT DEFAULT 'sonnet',
+      system_prompt TEXT,
+      project_id TEXT REFERENCES projects(id),
+      active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // PM reports: periodic summaries from the PM agent to the human
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS pm_reports (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      agent_id TEXT REFERENCES agents(id),
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      read INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Ideas: feature ideas / tickets dumped by human or agent
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS ideas (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      title TEXT NOT NULL,
+      description TEXT,
+      source TEXT DEFAULT 'human',
+      priority INTEGER DEFAULT 5,
+      status TEXT DEFAULT 'new',
+      promoted_to_feature_id TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Migration: add memory_tier to project_memory and system_memory
+  try {
+    const pmCols = database.prepare("PRAGMA table_info(project_memory)").all();
+    if (!pmCols.find(c => c.name === 'memory_tier')) {
+      database.exec("ALTER TABLE project_memory ADD COLUMN memory_tier TEXT DEFAULT 'working'");
+    }
+    const smCols = database.prepare("PRAGMA table_info(system_memory)").all();
+    if (!smCols.find(c => c.name === 'memory_tier')) {
+      database.exec("ALTER TABLE system_memory ADD COLUMN memory_tier TEXT DEFAULT 'working'");
+    }
+  } catch {}
+
   log.info('Database migration complete');
 }
 
