@@ -244,7 +244,7 @@ function PlanReviewCard({ task, onAction }) {
   );
 }
 
-export default function HumanTaskCard({ task, onAction }) {
+export default function HumanTaskCard({ task, onAction, onChat }) {
   const [showDiff, setShowDiff] = useState(false);
   const [diff, setDiff] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -409,6 +409,12 @@ export default function HumanTaskCard({ task, onAction }) {
               title="Open this session in Terminal to continue manually">
               Take over
             </button>
+            {onChat && (
+              <button onClick={() => onChat(task)}
+                className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
+                Chat
+              </button>
+            )}
             <div className="flex-1" />
             <button onClick={handleDismiss} disabled={acting}
               className="px-3 py-1.5 text-xs bg-research/90 text-white rounded-lg hover:bg-research/70 disabled:opacity-50 transition-colors font-medium">
@@ -474,6 +480,12 @@ export default function HumanTaskCard({ task, onAction }) {
               title="Open this session in Terminal to continue manually">
               Take over
             </button>
+            {onChat && (
+              <button onClick={() => onChat(task)}
+                className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
+                Chat
+              </button>
+            )}
             <div className="flex-1" />
             <button onClick={handleReject} disabled={acting}
               className="px-3 py-1.5 text-xs text-error/70 hover:text-error border border-error/20 rounded-lg hover:bg-error/10 transition-colors">

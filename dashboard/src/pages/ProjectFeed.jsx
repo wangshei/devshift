@@ -4,6 +4,7 @@ import { useApi, api } from '../hooks/useApi';
 import HumanTaskCard from '../components/HumanTaskCard';
 import SplitDiffViewer from '../components/SplitDiffViewer';
 import TaskInput from '../components/TaskInput';
+import ChatPanel from '../components/ChatPanel';
 
 function CommentThread({ taskId }) {
   const { data: comments, refetch } = useApi(`/comments/${taskId}/comments`, []);
@@ -118,7 +119,7 @@ function formatResultSummary(text) {
 }
 
 /** Expandable completed/in-progress task card */
-function TaskCard({ task, onAction }) {
+function TaskCard({ task, onAction, onChat }) {
   const [expanded, setExpanded] = useState(false);
   const [diff, setDiff] = useState(null);
   const [loadingDiff, setLoadingDiff] = useState(false);
@@ -325,6 +326,12 @@ function TaskCard({ task, onAction }) {
                   title="Open this session in Terminal to continue manually">
                   Take over
                 </button>
+                {onChat && (
+                  <button onClick={() => onChat(task)}
+                    className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
+                    Chat
+                  </button>
+                )}
                 <div className="flex-1" />
                 <button onClick={handleDismiss} disabled={acting}
                   className="px-3 py-1.5 text-xs bg-research/90 text-white rounded-lg hover:bg-research/70 disabled:opacity-50 transition-colors font-medium">
@@ -368,6 +375,12 @@ function TaskCard({ task, onAction }) {
                     title="Open this session in Terminal to continue manually">
                     Take over
                   </button>
+                  {onChat && (
+                    <button onClick={() => onChat(task)}
+                      className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
+                      Chat
+                    </button>
+                  )}
                   <div className="flex-1" />
                   {task.pr_url && (
                     <a href={task.pr_url} target="_blank" rel="noopener noreferrer"
@@ -455,6 +468,7 @@ export default function ProjectFeed() {
   const { data, refetch } = useApi(`/timeline/project/${id}`, [], 5000);
   const [renamingName, setRenamingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
+  const [chatTask, setChatTask] = useState(null);
 
   if (!data) return (
     <div className="px-6 py-6">
@@ -508,6 +522,19 @@ export default function ProjectFeed() {
 
   return (
     <div className="flex flex-col h-full min-h-screen">
+      {/* Chat panel overlay */}
+      {chatTask && (
+        <div className="fixed inset-y-0 right-0 w-96 z-50 shadow-xl">
+          <ChatPanel
+            taskId={chatTask.id}
+            projectId={id}
+            taskTitle={chatTask.title}
+            onClose={() => setChatTask(null)}
+            onPushed={() => { setChatTask(null); refetch(); }}
+          />
+        </div>
+      )}
+
       {/* Header */}
       <div className="px-6 pt-5 pb-4 border-b border-border">
         <div className="flex items-start justify-between gap-4">
@@ -567,7 +594,7 @@ export default function ProjectFeed() {
               </h2>
             </div>
             <div className="flex flex-col gap-2">
-              {humanTasks.map(t => <HumanTaskCard key={t.id} task={t} onAction={refetch} />)}
+              {humanTasks.map(t => <HumanTaskCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />)}
             </div>
           </div>
         )}
@@ -576,7 +603,7 @@ export default function ProjectFeed() {
         {inProgress?.length > 0 && (
           <div className="flex flex-col gap-2">
             {inProgress.map(t => (
-              <TaskCard key={t.id} task={t} onAction={refetch} />
+              <TaskCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
             ))}
           </div>
         )}
@@ -593,7 +620,7 @@ export default function ProjectFeed() {
             </div>
             <div className="flex flex-col gap-2">
               {completed.map(t => (
-                <TaskCard key={t.id} task={t} onAction={refetch} />
+                <TaskCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
               ))}
             </div>
           </div>

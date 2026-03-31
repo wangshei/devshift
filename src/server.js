@@ -29,6 +29,7 @@ app.use('/api/changelog', require('./routes/changelog'));
 app.use('/api/setup', require('./routes/setup'));
 app.use('/api/comments', require('./routes/comments'));
 app.use('/api/memory', require('./routes/memory'));
+app.use('/api/chat', require('./routes/chat'));
 
 // Memory stats endpoint
 app.get('/api/memory/stats', (req, res) => {

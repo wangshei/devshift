@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApi, api } from '../hooks/useApi';
+import ChatPanel from '../components/ChatPanel';
 
 export default function MyWork() {
   const navigate = useNavigate();
   const { data, refetch } = useApi('/my-work', null, 5000);
+  const [chatTask, setChatTask] = useState(null);
 
   if (!data) return <div className="px-6 py-6 text-muted animate-pulse text-sm">Loading...</div>;
 
@@ -12,6 +14,19 @@ export default function MyWork() {
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-6 space-y-6">
+      {/* Chat panel overlay */}
+      {chatTask && (
+        <div className="fixed inset-y-0 right-0 w-96 z-50 shadow-xl">
+          <ChatPanel
+            taskId={chatTask.id}
+            projectId={chatTask.project_id}
+            taskTitle={chatTask.title}
+            onClose={() => setChatTask(null)}
+            onPushed={() => { setChatTask(null); refetch(); }}
+          />
+        </div>
+      )}
+
       <h1 className="text-lg font-semibold">My Work</h1>
 
       {/* Active work */}
@@ -24,7 +39,7 @@ export default function MyWork() {
         ) : (
           <div className="space-y-2">
             {activeWork.map(t => (
-              <ActiveWorkCard key={t.id} task={t} onAction={refetch} />
+              <ActiveWorkCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
             ))}
           </div>
         )}
@@ -38,19 +53,19 @@ export default function MyWork() {
           </h2>
           <div className="space-y-1.5">
             {planReviews.length > 0 && (
-              <AttentionGroup label="Plans to approve" items={planReviews} type="plan" navigate={navigate} />
+              <AttentionGroup label="Plans to approve" items={planReviews} type="plan" navigate={navigate} onChat={setChatTask} />
             )}
             {codeReviews.length > 0 && (
-              <AttentionGroup label="Code to review" items={codeReviews} type="review" navigate={navigate} />
+              <AttentionGroup label="Code to review" items={codeReviews} type="review" navigate={navigate} onChat={setChatTask} />
             )}
             {analyses.length > 0 && (
-              <AttentionGroup label="Analysis results" items={analyses} type="analysis" navigate={navigate} />
+              <AttentionGroup label="Analysis results" items={analyses} type="analysis" navigate={navigate} onChat={setChatTask} />
             )}
             {humanTasks.length > 0 && (
-              <AttentionGroup label="Tasks for you" items={humanTasks} type="human" navigate={navigate} />
+              <AttentionGroup label="Tasks for you" items={humanTasks} type="human" navigate={navigate} onChat={setChatTask} />
             )}
             {failed.length > 0 && (
-              <AttentionGroup label="Failed" items={failed} type="failed" navigate={navigate} />
+              <AttentionGroup label="Failed" items={failed} type="failed" navigate={navigate} onChat={setChatTask} />
             )}
           </div>
         </section>
@@ -83,7 +98,7 @@ export default function MyWork() {
   );
 }
 
-function ActiveWorkCard({ task, onAction }) {
+function ActiveWorkCard({ task, onAction, onChat }) {
   const [handoffNote, setHandoffNote] = useState('');
   const [acting, setActing] = useState(false);
 
@@ -119,6 +134,12 @@ function ActiveWorkCard({ task, onAction }) {
           className="px-3 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent/80 transition-colors font-medium">
           Continue in terminal
         </button>
+        {onChat && (
+          <button onClick={() => onChat(task)}
+            className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
+            Chat
+          </button>
+        )}
         <input value={handoffNote} onChange={e => setHandoffNote(e.target.value)}
           placeholder="Note for agent (optional)"
           className="flex-1 bg-bg border border-border rounded px-2 py-1.5 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent" />
@@ -135,7 +156,7 @@ function ActiveWorkCard({ task, onAction }) {
   );
 }
 
-function AttentionGroup({ label, items, type, navigate }) {
+function AttentionGroup({ label, items, type, navigate, onChat }) {
   const colors = {
     plan: 'text-accent',
     review: 'text-warning',
@@ -155,13 +176,22 @@ function AttentionGroup({ label, items, type, navigate }) {
     <div>
       <p className={`text-[10px] font-mono ${colors[type]} mb-1`}>{label}</p>
       {items.map(t => (
-        <button key={t.id}
-          onClick={() => navigate(`/project/${t.project_id}`)}
-          className="w-full flex items-center gap-2 px-3 py-2 bg-card border border-border rounded-lg hover:border-accent/20 transition-colors text-left mb-1">
-          <span className={`text-xs ${colors[type]}`}>{icons[type]}</span>
-          <span className="text-xs text-text flex-1 truncate">{t.title}</span>
-          <span className="text-[10px] font-mono text-vmuted">{t.project_name}</span>
-        </button>
+        <div key={t.id} className="flex items-center gap-1 mb-1">
+          <button
+            onClick={() => navigate(`/project/${t.project_id}`)}
+            className="flex-1 flex items-center gap-2 px-3 py-2 bg-card border border-border rounded-lg hover:border-accent/20 transition-colors text-left">
+            <span className={`text-xs ${colors[type]}`}>{icons[type]}</span>
+            <span className="text-xs text-text flex-1 truncate">{t.title}</span>
+            <span className="text-[10px] font-mono text-vmuted">{t.project_name}</span>
+          </button>
+          {onChat && (
+            <button
+              onClick={() => onChat(t)}
+              className="px-2.5 py-2 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors shrink-0">
+              Chat
+            </button>
+          )}
+        </div>
       ))}
     </div>
   );
