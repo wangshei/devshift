@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApi, api } from '../hooks/useApi';
 import SplitDiffViewer from './SplitDiffViewer';
+import Markdown from './Markdown';
 
 const TIER_LABELS = { 1: 'Auto', 2: 'Review', 3: 'Research' };
 
@@ -42,16 +43,46 @@ function CommentThread({ taskId }) {
   const { data: comments, refetch } = useApi(`/comments/${taskId}/comments`, []);
   const [text, setText] = useState('');
   const [posting, setPosting] = useState(false);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [gettingReply, setGettingReply] = useState(false);
 
   const handlePost = async () => {
-    if (!text.trim()) return;
+    if (!text.trim() && !imagePreview) return;
     setPosting(true);
     try {
-      await api(`/comments/${taskId}/comments`, { method: 'POST', body: { content: text } });
+      await api(`/comments/${taskId}/comments`, {
+        method: 'POST',
+        body: { content: text, image: imagePreview || undefined },
+      });
       setText('');
+      setImagePreview(null);
       refetch();
     } catch {}
     finally { setPosting(false); }
+  };
+
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        const reader = new FileReader();
+        reader.onload = () => setImagePreview(reader.result);
+        reader.readAsDataURL(file);
+        break;
+      }
+    }
+  };
+
+  const handleGetReply = async () => {
+    setGettingReply(true);
+    try {
+      await api(`/comments/${taskId}/agent-reply`, { method: 'POST' });
+      refetch();
+    } catch {}
+    finally { setGettingReply(false); }
   };
 
   return (
@@ -60,10 +91,25 @@ function CommentThread({ taskId }) {
         <div className="space-y-1.5">
           {comments.map(c => (
             <div key={c.id} className="text-xs text-muted">
-              <span className="text-vmuted font-mono">{c.author}</span>
-              {' '}{c.content}
+              <span className={`font-mono ${c.author === 'agent' ? 'text-accent' : 'text-vmuted'}`}>{c.author}</span>
+              {' '}
+              <Markdown text={c.content} className="inline text-xs text-muted leading-relaxed" />
+              {c.image_url && (
+                <img src={c.image_url} alt="" className="mt-1 max-w-xs rounded border border-border" />
+              )}
             </div>
           ))}
+        </div>
+      )}
+      {imagePreview && (
+        <div className="relative inline-block">
+          <img src={imagePreview} alt="preview" className="max-w-xs rounded border border-border" />
+          <button
+            onClick={() => setImagePreview(null)}
+            className="absolute top-1 right-1 bg-bg/80 text-vmuted hover:text-error rounded-full w-4 h-4 flex items-center justify-center text-[10px]"
+          >
+            ✕
+          </button>
         </div>
       )}
       <div className="flex gap-2">
@@ -71,10 +117,15 @@ function CommentThread({ taskId }) {
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handlePost()}
-          placeholder="Add feedback for the agent..."
+          onPaste={handlePaste}
+          placeholder="Add feedback… paste an image too"
           className="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent"
         />
-        <button onClick={handlePost} disabled={posting || !text.trim()}
+        <button onClick={handleGetReply} disabled={gettingReply}
+          className="px-2 py-1 text-xs text-accent hover:text-text disabled:opacity-40 transition-colors">
+          {gettingReply ? 'Thinking...' : 'Ask agent'}
+        </button>
+        <button onClick={handlePost} disabled={posting || (!text.trim() && !imagePreview)}
           className="px-2 py-1 text-xs text-accent hover:text-text disabled:opacity-40 transition-colors">
           Send
         </button>
@@ -356,7 +407,7 @@ export default function HumanTaskCard({ task, onAction, onChat }) {
               {/* Show result summary prominently */}
               {resultText ? (
                 <div className="mt-2 p-3 bg-bg rounded-lg border border-border">
-                  <p className="text-xs text-muted leading-relaxed whitespace-pre-wrap">{resultText}</p>
+                  <Markdown text={resultText} className="text-xs text-muted leading-relaxed" />
                 </div>
               ) : generatedTasks ? (
                 <div className="mt-2 p-3 bg-bg rounded-lg border border-border">
@@ -391,7 +442,7 @@ export default function HumanTaskCard({ task, onAction, onChat }) {
               )}
 
               {cleanSummary(task.review_instructions) && (
-                <p className="text-xs text-muted mt-2 italic">{cleanSummary(task.review_instructions)}</p>
+                <Markdown text={cleanSummary(task.review_instructions)} className="text-xs text-muted mt-2 leading-relaxed italic" />
               )}
             </div>
           </div>
@@ -454,10 +505,10 @@ export default function HumanTaskCard({ task, onAction, onChat }) {
             </div>
             <p className="text-sm mt-0.5 text-text">{task.title}</p>
             {cleanSummary(task.result_summary) && (
-              <p className="text-xs text-muted mt-1">{cleanSummary(task.result_summary)}</p>
+              <Markdown text={cleanSummary(task.result_summary)} className="text-xs text-muted mt-1 leading-relaxed" />
             )}
             {cleanSummary(task.review_instructions) && (
-              <p className="text-xs text-muted mt-1 italic">{cleanSummary(task.review_instructions)}</p>
+              <Markdown text={cleanSummary(task.review_instructions)} className="text-xs text-muted mt-1 leading-relaxed italic" />
             )}
           </div>
           {task.pr_url && (

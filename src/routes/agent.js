@@ -101,6 +101,28 @@ async function runNextTask() {
   }
 }
 
+// POST /api/agent/run-once — execute the next queued task immediately
+router.post('/run-once', async (req, res) => {
+  const db = getDb();
+  const task = db.prepare(`
+    SELECT * FROM tasks
+    WHERE status IN ('backlog', 'queued') AND task_type = 'agent'
+    ORDER BY priority ASC, created_at ASC
+    LIMIT 1
+  `).get();
+
+  if (!task) return res.json({ ran: false, message: 'No tasks queued' });
+
+  res.json({ ran: true, taskId: task.id, title: task.title });
+
+  // Execute in background
+  try {
+    await executeTask(task.id);
+  } catch (e) {
+    log.error(`[RunOnce] Error: ${e.message}`);
+  }
+});
+
 // POST /api/agent/smart-mode — manually trigger smart mode on a project
 router.post('/smart-mode', async (req, res) => {
   const { project_id, analysis_type } = req.body;

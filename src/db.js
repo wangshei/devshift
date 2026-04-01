@@ -182,6 +182,14 @@ function migrate() {
     )
   `);
 
+  // Migration: add image_url to task_comments
+  try {
+    const commentCols = database.prepare("PRAGMA table_info(task_comments)").all();
+    if (!commentCols.find(c => c.name === 'image_url')) {
+      database.exec("ALTER TABLE task_comments ADD COLUMN image_url TEXT");
+    }
+  } catch {}
+
   // Migration: project_memory table — per-project learnings
   database.exec(`
     CREATE TABLE IF NOT EXISTS project_memory (

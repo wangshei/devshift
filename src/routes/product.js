@@ -7,7 +7,7 @@ const router = Router();
 // --- Goals ---
 router.get('/:projectId/goals', (req, res) => {
   const db = getDb();
-  const goals = db.prepare('SELECT * FROM goals WHERE project_id = ? ORDER BY status, priority ASC').all(req.params.projectId);
+  const goals = db.prepare('SELECT * FROM goals WHERE project_id = ? ORDER BY status ASC, created_at DESC').all(req.params.projectId);
   res.json(goals);
 });
 
@@ -40,7 +40,7 @@ router.delete('/goals/:id', (req, res) => {
 // --- Features ---
 router.get('/:projectId/features', (req, res) => {
   const db = getDb();
-  const features = db.prepare('SELECT * FROM features WHERE project_id = ? ORDER BY status, priority ASC').all(req.params.projectId);
+  const features = db.prepare('SELECT * FROM features WHERE project_id = ? ORDER BY status ASC, created_at DESC').all(req.params.projectId);
   res.json(features);
 });
 

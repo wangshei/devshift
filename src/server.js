@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { PORT } = require('./utils/config');
+const { PORT, DATA_DIR } = require('./utils/config');
 const log = require('./utils/logger');
 const { migrate } = require('./db');
 const scheduler = require('./services/scheduler');
@@ -28,6 +28,7 @@ app.use('/api/timeline', require('./routes/timeline'));
 app.use('/api/changelog', require('./routes/changelog'));
 app.use('/api/setup', require('./routes/setup'));
 app.use('/api/comments', require('./routes/comments'));
+app.use('/api/images', express.static(path.join(DATA_DIR, 'images')));
 app.use('/api/memory', require('./routes/memory'));
 app.use('/api/chat', require('./routes/chat'));
 app.use('/api/product', require('./routes/product'));
