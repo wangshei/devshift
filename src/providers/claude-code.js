@@ -268,11 +268,18 @@ class ClaudeCodeProvider extends BaseProvider {
           return;
         }
 
-        // Check for rate limiting
+        // Check for rate limiting — extract reset time if available
         const combined = output + stderr;
         if (combined.includes('rate limit') || combined.includes('Rate limit') ||
-            combined.includes('Too many requests') || combined.includes('429')) {
-          resolve({ success: false, output, error: 'rate_limited', rateLimited: true });
+            combined.includes('Too many requests') || combined.includes('429') ||
+            combined.includes('out_of_credits')) {
+          // Try to parse resetsAt from rate_limit_event in stream-json output
+          let resetsAt = null;
+          try {
+            const rlMatch = combined.match(/"resetsAt"\s*:\s*(\d+)/);
+            if (rlMatch) resetsAt = new Date(parseInt(rlMatch[1]) * 1000).toISOString();
+          } catch {}
+          resolve({ success: false, output, error: 'rate_limited', rateLimited: true, resetsAt });
           return;
         }
 

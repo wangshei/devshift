@@ -191,11 +191,13 @@ async function executeTask(taskId) {
   if (!result.success) {
     // Handle rate limiting — re-queue the task instead of failing it
     if (result.rateLimited) {
-      const backoffMinutes = 5;
-      const backoffUntil = new Date(Date.now() + backoffMinutes * 60 * 1000).toISOString();
+      // Use provider's resetsAt if available, otherwise default 5 min backoff
+      const backoffUntil = result.resetsAt || new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      const resetsIn = Math.max(1, Math.round((new Date(backoffUntil) - Date.now()) / 60000));
+
       db.prepare('UPDATE providers SET rate_limited_until = ? WHERE id = ?')
         .run(backoffUntil, providerRecord.id);
-      log.warn(`Provider ${providerRecord.name} rate limited until ${backoffUntil}`);
+      log.warn(`Provider ${providerRecord.name} rate limited until ${backoffUntil} (${resetsIn}min)`);
 
       // Re-queue the task so scheduler picks it up after backoff
       if (mainBranch) {
@@ -203,9 +205,9 @@ async function executeTask(taskId) {
       }
       db.prepare("UPDATE tasks SET status = 'queued', started_at = NULL WHERE id = ?").run(taskId);
       db.prepare("UPDATE executions SET status = 'rate_limited', error = ? WHERE id = ?")
-        .run(`Rate limited. Will retry after ${backoffUntil}`, execId);
+        .run(`Rate limited. Will retry after ${backoffUntil} (~${resetsIn}min)`, execId);
       repoLocks.delete(project.repo_path);
-      log.info(`Task "${task.title}" re-queued after rate limit (retry in ${backoffMinutes}min)`);
+      log.info(`Task "${task.title}" re-queued (retry in ~${resetsIn}min)`);
       return { success: false, taskId, error: 'rate_limited', retryAfter: backoffUntil };
     }
 

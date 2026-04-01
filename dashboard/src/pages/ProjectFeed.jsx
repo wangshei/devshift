@@ -238,6 +238,16 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
                       {t.actual_minutes && (
                         <span className="text-[10px] font-mono text-vmuted">{t.actual_minutes}m</span>
                       )}
+                      {/* View how agent did it — opens chat with session context */}
+                      {t.status === 'done' && t.session_id && (
+                        <button
+                          onClick={() => navigate(`/chat/${id}?session=${t.session_id}&title=${encodeURIComponent(t.title)}`)}
+                          className="text-[10px] text-vmuted hover:text-accent transition-colors"
+                          title="View how the agent completed this task"
+                        >
+                          View session
+                        </button>
+                      )}
                     </div>
 
                     {/* Review actions inline for needs_review tasks */}

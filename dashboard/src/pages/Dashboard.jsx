@@ -74,6 +74,15 @@ export default function Dashboard() {
           {credits?.status === 'exhausted' && (
             <span className="text-[10px] text-error font-bold">Budget exhausted — agent paused</span>
           )}
+          {credits?.providerBreakdown?.some(p => p.rateLimitedUntil && new Date(p.rateLimitedUntil) > new Date()) && (
+            <span className="text-[10px] text-warning font-mono">
+              Rate limited — resets {(() => {
+                const rl = credits.providerBreakdown.find(p => p.rateLimitedUntil && new Date(p.rateLimitedUntil) > new Date());
+                const mins = Math.max(1, Math.round((new Date(rl.rateLimitedUntil) - new Date()) / 60000));
+                return mins < 60 ? `in ${mins}min` : `at ${new Date(rl.rateLimitedUntil).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
+              })()}
+            </span>
+          )}
         </div>
       </section>
 
