@@ -7,6 +7,7 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
   const [sending, setSending] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [totalCost, setTotalCost] = useState(0);
+  const [chatMode, setChatMode] = useState('think'); // think | plan | agent
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [taskDraft, setTaskDraft] = useState({ title: '', description: '' });
   const scrollRef = useRef(null);
@@ -43,7 +44,7 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
       const response = await fetch('/api/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId, message: text }),
+        body: JSON.stringify({ taskId, message: text, mode: chatMode, model: chatMode === 'think' ? 'sonnet' : undefined }),
       });
 
       const reader = response.body.getReader();
@@ -265,14 +266,14 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
       )}
 
       {/* Input */}
-      <div className="border-t border-border px-4 py-3 shrink-0">
+      <div className="border-t border-border px-4 py-3 shrink-0 space-y-2">
         <div className="flex gap-2">
           <input
             ref={inputRef}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-            placeholder={sending ? 'Waiting for response...' : 'Type a message...'}
+            placeholder={sending ? 'Waiting for response...' : chatMode === 'think' ? 'Brainstorm an idea...' : chatMode === 'plan' ? 'Ask about the codebase...' : 'Tell the agent what to build...'}
             disabled={sending}
             className="flex-1 bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text placeholder:text-vmuted focus:outline-none focus:border-accent disabled:opacity-50"
           />
@@ -280,6 +281,25 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
             className="px-4 py-2 bg-accent text-white text-sm rounded-lg hover:bg-accent/80 disabled:opacity-40 transition-colors">
             Send
           </button>
+        </div>
+        {/* Mode selector */}
+        <div className="flex items-center gap-1">
+          {[
+            { id: 'think', label: 'Think', desc: 'Brainstorm (cheapest)', color: 'text-success' },
+            { id: 'plan', label: 'Plan', desc: 'Can read files', color: 'text-accent' },
+            { id: 'agent', label: 'Agent', desc: 'Can edit & run', color: 'text-warning' },
+          ].map(m => (
+            <button key={m.id} onClick={() => setChatMode(m.id)}
+              className={`px-2 py-1 text-[10px] rounded transition-colors ${
+                chatMode === m.id ? `${m.color} bg-bg border border-border font-medium` : 'text-vmuted hover:text-muted'
+              }`}
+              title={m.desc}>
+              {m.label}
+            </button>
+          ))}
+          <span className="text-[9px] text-vmuted ml-auto">
+            {chatMode === 'think' ? '~$0.01/msg' : chatMode === 'plan' ? '~$0.03/msg' : '~$0.08/msg'}
+          </span>
         </div>
       </div>
     </div>
