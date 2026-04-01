@@ -109,7 +109,17 @@ function pickProvider(tier) {
 }
 
 /**
- * Pick the best provider for a task, prioritising providers with unused credits first.
+ * Pick the best provider for a task based on:
+ * 1. Task complexity (tier 1 easy tasks → cheaper providers first)
+ * 2. Unused credits (least-used provider this week goes first)
+ * 3. Provider capabilities (opus only on claude_code)
+ * 4. Rate limit status
+ *
+ * Strategy:
+ * - Tier 1 (quick wins): prefer Antigravity/Cursor (save Claude credits for harder work)
+ * - Tier 2 (features): prefer least-used provider, Claude for opus
+ * - Tier 3 (research): any available provider
+ *
  * @param {object} task - { tier, model, title, provider }
  * @returns {object|null} provider record from DB
  */
@@ -147,21 +157,39 @@ function pickBestProvider(task) {
 
   const tier = task.tier || 2;
 
-  // Sort: least-used provider first (prioritize unused credits)
-  const eligible = providers
-    .filter(p => {
-      const tiers = (p.use_for_tiers || '1,2,3').split(',').map(Number);
-      return tiers.includes(tier);
-    })
-    .sort((a, b) => a._weeklyUsage - b._weeklyUsage);
+  // Filter to providers that handle this tier
+  const eligible = providers.filter(p => {
+    const tiers = (p.use_for_tiers || '1,2,3').split(',').map(Number);
+    return tiers.includes(tier);
+  });
 
-  // For complex tasks (opus), prefer claude_code
+  if (!eligible.length) return providers[0] || null;
+
+  // For headless (autonomous) execution, only claude_code works — others need a GUI window
+  // Antigravity's `agy chat` opens a window, Cursor has no CLI
+  const headlessProviders = eligible.filter(p => p.id === 'claude_code');
+  if (headlessProviders.length > 0 && !task._interactive) {
+    return headlessProviders[0];
+  }
+
+  // Tier 2 with opus: must use Claude (other providers don't support opus)
   if (task.model === 'opus') {
     const claude = eligible.find(p => p.id === 'claude_code');
     if (claude) return claude;
   }
 
-  return eligible[0] || providers[0] || null;
+  // Default: least-used provider first (spread credits evenly)
+  eligible.sort((a, b) => a._weeklyUsage - b._weeklyUsage);
+
+  // If Claude is rate-limited or heavily used, prefer alternatives
+  const claude = eligible.find(p => p.id === 'claude_code');
+  const others = eligible.filter(p => p.id !== 'claude_code');
+  if (claude && others.length > 0 && claude._weeklyUsage > others[0]._weeklyUsage * 2) {
+    // Claude has 2x more usage than the least-used alternative — use the alternative
+    return others[0];
+  }
+
+  return eligible[0];
 }
 
 module.exports = { detectProviders, getProviders, pickProvider, pickBestProvider, KNOWN_PROVIDERS };
