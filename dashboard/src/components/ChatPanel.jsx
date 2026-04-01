@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { api } from '../hooks/useApi';
+import { api, useApi } from '../hooks/useApi';
 
 export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPushed }) {
   const [messages, setMessages] = useState([]);
@@ -7,8 +7,12 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
   const [sending, setSending] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [totalCost, setTotalCost] = useState(0);
+  const [showTaskForm, setShowTaskForm] = useState(false);
+  const [taskDraft, setTaskDraft] = useState({ title: '', description: '' });
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
+
+  const { data: credits } = useApi('/credits', [], 30000);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -123,6 +127,25 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
     }
   };
 
+  const handleCreateTask = (content) => {
+    setTaskDraft({
+      title: content.split('\n')[0].slice(0, 100),
+      description: content,
+    });
+    setShowTaskForm(true);
+  };
+
+  const handleCreateIdea = async (content) => {
+    if (!projectId) return;
+    try {
+      await api(`/product/${projectId}/ideas`, {
+        method: 'POST',
+        body: { title: content.split('\n')[0].slice(0, 100), description: content, source: 'chat' },
+      });
+      setMessages(prev => [...prev, { role: 'system', content: 'Idea saved.' }]);
+    } catch {}
+  };
+
   const handlePushToAgent = async () => {
     if (!taskId) return;
     try {
@@ -147,6 +170,15 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {credits && (
+            <span className={`text-[9px] font-mono ${
+              credits.available <= 0 ? 'text-error' :
+              credits.available < 0.5 ? 'text-error animate-pulse' :
+              credits.available < 1.5 ? 'text-warning' : 'text-vmuted'
+            }`}>
+              {credits.available <= 0 ? 'No credits' : `$${credits.available?.toFixed(2) || '?'} left`}
+            </span>
+          )}
           {totalCost > 0 && (
             <span className="text-[10px] font-mono text-vmuted">${totalCost.toFixed(3)}</span>
           )}
@@ -171,13 +203,15 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
           </div>
         )}
         {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
             <div className={`max-w-[85%] rounded-lg px-3 py-2 ${
               msg.role === 'user'
                 ? 'bg-accent text-white'
-                : msg.error
-                  ? 'bg-error/10 text-error border border-error/20'
-                  : 'bg-bg border border-border text-text'
+                : msg.role === 'system'
+                  ? 'bg-transparent text-vmuted italic text-[10px]'
+                  : msg.error
+                    ? 'bg-error/10 text-error border border-error/20'
+                    : 'bg-bg border border-border text-text'
             }`}>
               {msg.loading && !msg.content && (
                 <span className="text-xs text-muted animate-pulse">Thinking...</span>
@@ -195,9 +229,40 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
                 </div>
               )}
             </div>
+            {msg.role === 'assistant' && !msg.loading && !msg.error && (
+              <div className="flex gap-1 mt-1">
+                <button onClick={() => handleCreateTask(msg.content)}
+                  className="text-[9px] text-vmuted hover:text-accent transition-colors">
+                  → Create task
+                </button>
+                <button onClick={() => handleCreateIdea(msg.content)}
+                  className="text-[9px] text-vmuted hover:text-accent transition-colors">
+                  → Save as idea
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
+
+      {/* Inline task creation form */}
+      {showTaskForm && (
+        <div className="border-t border-border px-4 py-3 bg-bg space-y-2 shrink-0">
+          <input value={taskDraft.title} onChange={e => setTaskDraft(p => ({...p, title: e.target.value}))}
+            placeholder="Task title"
+            className="w-full bg-card border border-border rounded px-3 py-1.5 text-sm text-text focus:outline-none focus:border-accent" />
+          <textarea value={taskDraft.description} onChange={e => setTaskDraft(p => ({...p, description: e.target.value}))}
+            rows={3} className="w-full bg-card border border-border rounded px-3 py-1.5 text-xs text-text focus:outline-none focus:border-accent" />
+          <div className="flex gap-2">
+            <button onClick={async () => {
+              await api('/tasks', { method: 'POST', body: { project_id: projectId, title: taskDraft.title, description: taskDraft.description } });
+              setShowTaskForm(false);
+              setMessages(prev => [...prev, { role: 'system', content: `Task created: ${taskDraft.title}` }]);
+            }} className="px-3 py-1.5 text-xs bg-accent text-white rounded hover:bg-accent/80">Create task</button>
+            <button onClick={() => setShowTaskForm(false)} className="px-3 py-1.5 text-xs text-muted">Cancel</button>
+          </div>
+        </div>
+      )}
 
       {/* Input */}
       <div className="border-t border-border px-4 py-3 shrink-0">

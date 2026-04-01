@@ -151,6 +151,7 @@ function getSystemMemories() {
 
 /**
  * Format memories into a prompt-injectable string.
+ * Uses one-line summaries (max 120 chars) to keep prompts compact.
  */
 function formatMemoriesForPrompt(memories, label = 'Learnings') {
   if (!memories || memories.length === 0) return '';
@@ -158,19 +159,20 @@ function formatMemoriesForPrompt(memories, label = 'Learnings') {
   const grouped = {};
   for (const m of memories) {
     if (!grouped[m.category]) grouped[m.category] = [];
-    grouped[m.category].push(m.content);
+    grouped[m.category].push(m);
   }
 
   let result = `\n## ${label}\n`;
   for (const [cat, items] of Object.entries(grouped)) {
     result += `\n### ${cat.replace(/_/g, ' ')}\n`;
-    // Limit per category: patterns/preferences get 5, others get 3
     const limit = (cat === 'patterns' || cat === 'preferences') ? 5 : 3;
     for (const item of items.slice(0, limit)) {
-      result += `- ${item}\n`;
+      // One-line summary: first 120 chars, no newlines
+      const oneLine = item.content.replace(/\n/g, ' ').slice(0, 120);
+      result += `- ${oneLine}\n`;
     }
     if (items.length > limit) {
-      result += `- _(${items.length - limit} more in long-term memory)_\n`;
+      result += `- (${items.length - limit} more — use @search to retrieve)\n`;
     }
   }
   return result;

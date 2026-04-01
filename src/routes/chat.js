@@ -38,8 +38,26 @@ router.post('/send', (req, res) => {
     }
   }
 
+  let enrichedMessage = message.trim();
+
+  // First message in session — add project context so Claude already knows the project
+  if (!sessionId && project) {
+    let context = `[Project: ${project.name} at ${project.repo_path}]`;
+
+    // Add brief memory context
+    try {
+      const { getWorkingMemory, formatMemoriesForPrompt } = require('../services/memory');
+      const memories = getWorkingMemory(project.id);
+      if (memories.length > 0) {
+        context += formatMemoriesForPrompt(memories, 'What you should know');
+      }
+    } catch {}
+
+    enrichedMessage = context + '\n\n' + enrichedMessage;
+  }
+
   // Build the claude command
-  const args = ['-p', message.trim(), '--output-format', 'stream-json', '--verbose'];
+  const args = ['-p', enrichedMessage, '--output-format', 'stream-json', '--verbose'];
 
   if (sessionId) {
     args.push('--resume', sessionId);

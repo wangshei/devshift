@@ -81,7 +81,22 @@ function getTasksExecutedThisWindow() {
   return result.count;
 }
 
+/**
+ * Check if we're approaching the weekly budget limit.
+ * Returns a status object that callers can use to warn or pause the agent.
+ * @returns {{ status: 'ok'|'low'|'critical'|'exhausted', message: string, canRun: boolean }}
+ */
+function getBudgetStatus() {
+  const usage = getCreditUsage();
+  const remainingUsd = usage.available;
+
+  if (remainingUsd <= 0) return { status: 'exhausted', message: 'Budget exhausted. Agent paused.', canRun: false };
+  if (remainingUsd < 0.10) return { status: 'critical', message: `Only $${remainingUsd.toFixed(2)} remaining. Agent will pause soon.`, canRun: true };
+  if (remainingUsd < 0.50) return { status: 'low', message: `$${remainingUsd.toFixed(2)} remaining this week.`, canRun: true };
+  return { status: 'ok', message: `$${remainingUsd.toFixed(2)} remaining.`, canRun: true };
+}
+
 module.exports = {
   estimateTaskCostUsd, getCreditUsage, canAffordTask,
-  getMaxTasksForWindow, getTasksExecutedThisWindow,
+  getMaxTasksForWindow, getTasksExecutedThisWindow, getBudgetStatus,
 };

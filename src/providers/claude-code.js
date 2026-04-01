@@ -180,6 +180,23 @@ class ClaudeCodeProvider extends BaseProvider {
   }
 
   /**
+   * Truncate text to stay within a token budget. Keeps start and end, drops middle.
+   * Estimates ~4 chars per token.
+   * @param {string} text
+   * @param {number} maxTokens
+   * @returns {string}
+   */
+  _capToTokenBudget(text, maxTokens = 30000) {
+    const estimatedTokens = Math.ceil(text.length / 4);
+    if (estimatedTokens <= maxTokens) return text;
+    // Truncate from the middle (keep start and end)
+    const charBudget = maxTokens * 4;
+    const keepStart = Math.floor(charBudget * 0.7);
+    const keepEnd = Math.floor(charBudget * 0.3);
+    return text.slice(0, keepStart) + '\n\n... (truncated to save tokens) ...\n\n' + text.slice(-keepEnd);
+  }
+
+  /**
    * Execute a task using claude -p
    * @param {object} task
    * @param {object} project
@@ -205,7 +222,8 @@ class ClaudeCodeProvider extends BaseProvider {
     // Gather rich context
     const ctx = gatherContext(project, task);
 
-    const prompt = this._buildPrompt(task, project, ctx);
+    const rawPrompt = this._buildPrompt(task, project, ctx);
+    const prompt = this._capToTokenBudget(rawPrompt);
     const args = ['-p', prompt, '--output-format', 'json', '--permission-mode', 'bypassPermissions'];
     if (model === 'opus') {
       args.push('--model', 'opus');
@@ -288,12 +306,70 @@ class ClaudeCodeProvider extends BaseProvider {
 
   /**
    * Build a rich, structured prompt with full project context.
+   * Split into stable prefix (cache-friendly) and variable task part.
    * @param {object} task
    * @param {object} project
    * @param {object} ctx - gathered context from gatherContext()
    * @returns {string}
    */
   _buildPrompt(task, project, ctx) {
+    return this._buildStablePrefix(project, ctx) +
+      this._buildTaskPart(task, ctx) +
+      this._buildInstructions(ctx);
+  }
+
+  /**
+   * Stable prefix — identical across all tasks for a project, enabling Claude prompt cache hits.
+   * @param {object} project
+   * @param {object} ctx
+   * @returns {string}
+   */
+  _buildStablePrefix(project, ctx) {
+    const scripts = ctx.packageScripts;
+    return [
+      `You are working on "${project.name}" at ${project.repo_path}.`,
+      ctx.claudeMd ? `\n## Project Rules\n${ctx.claudeMd}` : '\n## Project Rules\nNo CLAUDE.md found.',
+      scripts ? `\n## Available Scripts\n${JSON.stringify(scripts, null, 2)}` : '',
+      ctx.directoryTree ? `\n## Directory Structure\n${ctx.directoryTree}` : '',
+      ctx.projectMemories || '',
+    ].filter(Boolean).join('\n');
+  }
+
+  /**
+   * Variable part — changes per task (task title, description, git log, referenced files).
+   * @param {object} task
+   * @param {object} ctx
+   * @returns {string}
+   */
+  _buildTaskPart(task, ctx) {
+    const parts = [
+      `\n## Task\n${task.title}`,
+      `\n## Description\n${task.description || 'No additional description.'}`,
+      ctx.recentGitLog ? `\n## Recent Changes\n${ctx.recentGitLog}` : '',
+      ctx.referencedFileContents ? `\n## Referenced Files\n${ctx.referencedFileContents}` : '',
+    ].filter(Boolean);
+
+    // Load task comments for additional context
+    try {
+      const { getDb } = require('../db');
+      const comments = getDb().prepare(
+        "SELECT content, author, created_at FROM task_comments WHERE task_id = ? ORDER BY created_at ASC"
+      ).all(task.id);
+      if (comments.length > 0) {
+        const commentLines = comments.map(c => `- [${c.author}]: ${c.content}`).join('\n');
+        parts.push(`\n## User Feedback on This Task\n${commentLines}`);
+      }
+    } catch { /* no comments table yet */ }
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Instructions section — mostly stable but references available scripts.
+   * @param {object} ctx
+   * @returns {string}
+   */
+  _buildInstructions(ctx) {
     const scripts = ctx.packageScripts;
     const testCmd = scripts && (scripts.test || scripts['test:unit'] || scripts['test:all']);
     const buildCmd = scripts && (scripts.build || scripts['build:prod']);
@@ -305,75 +381,19 @@ class ClaudeCodeProvider extends BaseProvider {
       lintCmd ? `- Run \`${lintCmd.includes(' ') ? 'npm run lint' : `npm run ${Object.keys(scripts).find(k => scripts[k] === lintCmd)}`}\` to check for lint errors.` : '',
     ].filter(Boolean).join('\n  ');
 
-    const parts = [
-      `You are working on the project "${project.name}" at ${project.repo_path}.`,
-      '',
-      '## Task',
-      task.title,
-      '',
-      '## Description',
-      task.description || 'No additional description.',
-    ];
-
-    if (ctx.claudeMd) {
-      parts.push('', '## Project Rules (CLAUDE.md)', ctx.claudeMd);
-    } else {
-      parts.push('', '## Project Rules (CLAUDE.md)', 'No CLAUDE.md found.');
-    }
-
-    parts.push(
-      '',
-      '## Available Scripts',
-      scripts ? JSON.stringify(scripts, null, 2) : 'No package.json found.',
-    );
-
-    if (ctx.directoryTree) {
-      parts.push('', '## Directory Structure', ctx.directoryTree);
-    }
-
-    if (ctx.recentGitLog) {
-      parts.push('', '## Recent Changes', ctx.recentGitLog);
-    }
-
-    if (ctx.referencedFileContents) {
-      parts.push('', '## Referenced Files', ctx.referencedFileContents);
-    }
-
-    if (ctx.projectMemories) {
-      parts.push(ctx.projectMemories);
-    }
-
-    // Load task comments for additional context
-    try {
-      const { getDb } = require('../db');
-      const comments = getDb().prepare(
-        "SELECT content, author, created_at FROM task_comments WHERE task_id = ? ORDER BY created_at ASC"
-      ).all(task.id);
-      if (comments.length > 0) {
-        parts.push('', '## User Feedback on This Task');
-        for (const c of comments) {
-          parts.push(`- [${c.author}]: ${c.content}`);
-        }
-      }
-    } catch { /* no comments table yet */ }
-
-    parts.push(
-      '',
-      '## Instructions',
+    const lines = [
+      '\n## Instructions',
       '- Read relevant files before making changes — understand the codebase first.',
       '- Follow existing code patterns and conventions.',
       '- After making changes, verify your work:',
-    );
-    if (verifySteps) {
-      parts.push(`  ${verifySteps}`);
-    }
-    parts.push(
+    ];
+    if (verifySteps) lines.push(`  ${verifySteps}`);
+    lines.push(
       '- If tests or build fail, fix the issues before finishing.',
       '- Do not add unnecessary comments, type annotations, or refactoring beyond what was asked.',
       '- Keep changes minimal and focused on the task.',
     );
-
-    return parts.join('\n');
+    return lines.join('\n');
   }
 }
 

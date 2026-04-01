@@ -109,13 +109,14 @@ function pickProvider(tier) {
 }
 
 /**
- * Pick the best provider for a task, considering complexity, capabilities, and rate limits.
+ * Pick the best provider for a task, prioritising providers with unused credits first.
  * @param {object} task - { tier, model, title, provider }
  * @returns {object|null} provider record from DB
  */
 function pickBestProvider(task) {
   const db = getDb();
   const now = new Date().toISOString();
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   // If task explicitly requests a provider, try that first
   if (task.provider) {
@@ -135,19 +136,32 @@ function pickBestProvider(task) {
 
   if (!providers.length) return null;
 
-  const tier = task.tier || 2;
-
+  // Calculate usage per provider this week
   for (const p of providers) {
-    const tiers = (p.use_for_tiers || '1,2,3').split(',').map(Number);
-    if (!tiers.includes(tier)) continue;
-
-    // For complex tasks (opus model), prefer claude_code
-    if (task.model === 'opus' && p.id === 'claude_code') return p;
-
-    return p;
+    const usage = db.prepare(
+      'SELECT COUNT(*) as count, COALESCE(SUM(actual_cost_usd), 0) as cost FROM executions WHERE provider = ? AND started_at > ?'
+    ).get(p.id, weekAgo);
+    p._weeklyUsage = usage.count;
+    p._weeklyCost = usage.cost;
   }
 
-  return providers[0] || null;
+  const tier = task.tier || 2;
+
+  // Sort: least-used provider first (prioritize unused credits)
+  const eligible = providers
+    .filter(p => {
+      const tiers = (p.use_for_tiers || '1,2,3').split(',').map(Number);
+      return tiers.includes(tier);
+    })
+    .sort((a, b) => a._weeklyUsage - b._weeklyUsage);
+
+  // For complex tasks (opus), prefer claude_code
+  if (task.model === 'opus') {
+    const claude = eligible.find(p => p.id === 'claude_code');
+    if (claude) return claude;
+  }
+
+  return eligible[0] || providers[0] || null;
 }
 
 module.exports = { detectProviders, getProviders, pickProvider, pickBestProvider, KNOWN_PROVIDERS };

@@ -1,7 +1,7 @@
 const cron = require('node-cron');
 const { getDb } = require('../db');
 const { executeTask } = require('./executor');
-const { canAffordTask, getMaxTasksForWindow, getTasksExecutedThisWindow, getCreditUsage } = require('./planner');
+const { canAffordTask, getMaxTasksForWindow, getTasksExecutedThisWindow, getCreditUsage, getBudgetStatus } = require('./planner');
 const log = require('../utils/logger');
 
 let schedulerRunning = false;
@@ -177,6 +177,13 @@ async function tick() {
     let tasksExecutedThisTick = 0;
 
     while (task && tasksExecutedThisTick < 3) { // max 3 per tick to not hog
+      // Check budget before every task execution
+      const budget = getBudgetStatus();
+      if (!budget.canRun) {
+        log.warn(`Scheduler: ${budget.message}`);
+        break;
+      }
+
       const workMode = require('./work-mode');
       if (workMode.needsImprovement(task.title, task.description, { tier: task.tier, parent_task_id: task.parent_task_id })) {
         try {
