@@ -189,12 +189,24 @@ async function executeTask(taskId) {
   let durationMin = Math.round((Date.now() - startTime) / 60000);
 
   if (!result.success) {
-    // Handle rate limiting
+    // Handle rate limiting — re-queue the task instead of failing it
     if (result.rateLimited) {
-      const backoffUntil = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      const backoffMinutes = 5;
+      const backoffUntil = new Date(Date.now() + backoffMinutes * 60 * 1000).toISOString();
       db.prepare('UPDATE providers SET rate_limited_until = ? WHERE id = ?')
         .run(backoffUntil, providerRecord.id);
       log.warn(`Provider ${providerRecord.name} rate limited until ${backoffUntil}`);
+
+      // Re-queue the task so scheduler picks it up after backoff
+      if (mainBranch) {
+        try { gitUtils.checkout(project.repo_path, mainBranch); } catch {}
+      }
+      db.prepare("UPDATE tasks SET status = 'queued', started_at = NULL WHERE id = ?").run(taskId);
+      db.prepare("UPDATE executions SET status = 'rate_limited', error = ? WHERE id = ?")
+        .run(`Rate limited. Will retry after ${backoffUntil}`, execId);
+      repoLocks.delete(project.repo_path);
+      log.info(`Task "${task.title}" re-queued after rate limit (retry in ${backoffMinutes}min)`);
+      return { success: false, taskId, error: 'rate_limited', retryAfter: backoffUntil };
     }
 
     // Try to go back to main branch
