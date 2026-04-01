@@ -23,6 +23,8 @@ function getProviderInstance(providerId) {
     claude_code: () => new (require('../providers/claude-code'))(),
     antigravity: () => new (require('../providers/antigravity'))(),
     cursor: () => new (require('../providers/cursor'))(),
+    openai: () => new (require('../providers/openai'))(),
+    gemini: () => new (require('../providers/gemini'))(),
   };
 
   if (!providers[providerId]) return null;

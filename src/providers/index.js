@@ -6,6 +6,8 @@ const KNOWN_PROVIDERS = [
   { id: 'claude_code', name: 'Claude Code', cli: 'claude' },
   { id: 'antigravity', name: 'Google Antigravity', cli: 'agy' },
   { id: 'cursor', name: 'Cursor', cli: 'cursor' },
+  { id: 'openai', name: 'OpenAI GPT', cli: null, apiProvider: true },
+  { id: 'gemini', name: 'Google Gemini', cli: null, apiProvider: true },
 ];
 
 const fs = require('fs');
@@ -52,14 +54,22 @@ function detectProviders() {
   const results = [];
 
   for (const p of KNOWN_PROVIDERS) {
-    const installed = commandExists(p.cli);
+    let installed;
+    if (p.apiProvider) {
+      // API-based providers: check for API key in env or DB
+      const existing = db.prepare('SELECT api_key FROM providers WHERE id = ?').get(p.id);
+      const envKey = p.id === 'openai' ? process.env.OPENAI_API_KEY : process.env.GEMINI_API_KEY;
+      installed = !!(existing?.api_key || envKey);
+    } else {
+      installed = commandExists(p.cli);
+    }
     const existing = db.prepare('SELECT * FROM providers WHERE id = ?').get(p.id);
 
     if (!existing) {
       db.prepare(`
         INSERT INTO providers (id, name, enabled, cli_command, auth_status)
         VALUES (?, ?, ?, ?, ?)
-      `).run(p.id, p.name, installed ? 1 : 0, p.cli, installed ? 'unknown' : 'not_installed');
+      `).run(p.id, p.name, installed ? 1 : 0, p.cli || '', installed ? 'unknown' : 'not_installed');
       log.info(`Provider ${p.name}: ${installed ? 'detected' : 'not found'}`);
     }
 
@@ -165,11 +175,23 @@ function pickBestProvider(task) {
 
   if (!eligible.length) return providers[0] || null;
 
-  // For headless (autonomous) execution, only claude_code works — others need a GUI window
-  // Antigravity's `agy chat` opens a window, Cursor has no CLI
+  // API providers (openai, gemini) are prompt-response only — no file editing
+  const API_PROVIDERS = ['openai', 'gemini'];
+
+  // For headless (autonomous) execution that needs file editing,
+  // only claude_code works — others need a GUI window or are API-only
   const headlessProviders = eligible.filter(p => p.id === 'claude_code');
-  if (headlessProviders.length > 0 && !task._interactive) {
-    return headlessProviders[0];
+  const apiProviders = eligible.filter(p => API_PROVIDERS.includes(p.id));
+
+  // If task is prompt-only (chat, review, planning), API providers can handle it
+  const isPromptOnly = task.task_type === 'chat' || task.task_type === 'review' ||
+    task.task_type === 'planning' || task._promptOnly;
+
+  if (!isPromptOnly && !task._interactive) {
+    // Needs file editing — use Claude if available, fall back to API providers only if Claude is exhausted
+    if (headlessProviders.length > 0) return headlessProviders[0];
+    // Claude unavailable (rate limited) — API providers can still do prompt-response
+    if (apiProviders.length > 0) return apiProviders[0];
   }
 
   // Tier 2 with opus: must use Claude (other providers don't support opus)

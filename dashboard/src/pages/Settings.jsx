@@ -42,6 +42,11 @@ export default function Settings() {
     refetchProviders();
   };
 
+  const handleSaveApiKey = async (id, key) => {
+    await api(`/providers/${id}`, { method: 'PATCH', body: { api_key: key, enabled: key ? 1 : 0 } });
+    refetchProviders();
+  };
+
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
   return (
@@ -126,6 +131,40 @@ export default function Settings() {
             <ProviderStatus key={p.id} provider={p}
               onToggle={() => handleToggleProvider(p.id, p.enabled)} />
           ))}
+        </div>
+      </section>
+
+      {/* API Keys */}
+      <section className="mt-8">
+        <h2 className="text-sm font-medium text-muted mb-3">API Keys (Fallback Providers)</h2>
+        <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+          <p className="text-xs text-vmuted">GPT and Gemini handle chat, reviews, and planning when Claude is rate limited. They cannot edit files.</p>
+          {[
+            { id: 'openai', label: 'OpenAI API Key', placeholder: 'sk-...' },
+            { id: 'gemini', label: 'Gemini API Key', placeholder: 'AIza...' },
+          ].map(({ id, label, placeholder }) => {
+            const provider = providers?.find(p => p.id === id);
+            const hasKey = !!provider?.api_key;
+            return (
+              <div key={id}>
+                <label className="text-xs text-vmuted block mb-1">{label}</label>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    placeholder={hasKey ? '••••••••••••••••' : placeholder}
+                    onBlur={e => { if (e.target.value) handleSaveApiKey(id, e.target.value); }}
+                    onKeyDown={e => { if (e.key === 'Enter' && e.target.value) handleSaveApiKey(id, e.target.value); }}
+                    className="flex-1 bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent font-mono"
+                  />
+                  {hasKey && (
+                    <button onClick={() => handleSaveApiKey(id, '')}
+                      className="px-2 py-1 text-xs text-error hover:underline">Clear</button>
+                  )}
+                </div>
+                {hasKey && <span className="text-xs text-success mt-1 inline-block">Configured</span>}
+              </div>
+            );
+          })}
         </div>
       </section>
 

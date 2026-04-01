@@ -339,6 +339,12 @@ function migrate() {
     )
   `);
 
+  // Migration: add api_key column to providers for API-based providers (GPT, Gemini)
+  const provCols = database.prepare("PRAGMA table_info(providers)").all();
+  if (!provCols.find(c => c.name === 'api_key')) {
+    database.exec("ALTER TABLE providers ADD COLUMN api_key TEXT");
+  }
+
   // Migration: add memory_tier to project_memory and system_memory
   try {
     const pmCols = database.prepare("PRAGMA table_info(project_memory)").all();

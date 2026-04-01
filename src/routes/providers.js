@@ -6,7 +6,10 @@ const router = Router();
 
 // GET /api/providers — list all providers
 router.get('/', (req, res) => {
-  const providers = getProviders();
+  const providers = getProviders().map(p => ({
+    ...p,
+    api_key: p.api_key ? '••••' + p.api_key.slice(-4) : null,
+  }));
   res.json(providers);
 });
 
@@ -23,7 +26,7 @@ router.patch('/:id', (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Provider not found' });
 
   const fields = ['enabled', 'cli_command', 'auth_status', 'plan_tier',
-    'use_for_tiers', 'priority', 'rate_limited_until'];
+    'use_for_tiers', 'priority', 'rate_limited_until', 'api_key'];
   const updates = [];
   const values = [];
 

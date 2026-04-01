@@ -11,7 +11,7 @@ export default function ProviderStatus({ provider, onToggle }) {
       }`} />
       <div className="flex-1">
         <span className="text-sm text-text">{provider.name}</span>
-        <span className="text-xs text-vmuted ml-2 font-mono">{provider.cli_command}</span>
+        <span className="text-xs text-vmuted ml-2 font-mono">{provider.cli_command || 'API'}</span>
         {provider.plan_tier && (
           <span className="text-xs text-muted ml-2">({provider.plan_tier})</span>
         )}
