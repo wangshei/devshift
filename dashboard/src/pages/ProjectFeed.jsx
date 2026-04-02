@@ -16,7 +16,7 @@ function CommentThread({ taskId }) {
   const [text, setText] = useState('');
   const [posting, setPosting] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
-  const [gettingReply, setGettingReply] = useState(false);
+  const [agentReplying, setAgentReplying] = useState(false);
 
   const handlePost = async () => {
     if (!text.trim() && !imagePreview) return;
@@ -29,6 +29,15 @@ function CommentThread({ taskId }) {
       setText('');
       setImagePreview(null);
       refetch();
+
+      // Poll for agent auto-reply (fires within a few seconds)
+      setAgentReplying(true);
+      let polls = 0;
+      const pollInterval = setInterval(() => {
+        refetch();
+        polls++;
+        if (polls >= 5) { clearInterval(pollInterval); setAgentReplying(false); }
+      }, 2000);
     } catch {}
     finally { setPosting(false); }
   };
@@ -48,15 +57,6 @@ function CommentThread({ taskId }) {
     }
   };
 
-  const handleGetReply = async () => {
-    setGettingReply(true);
-    try {
-      await api(`/comments/${taskId}/agent-reply`, { method: 'POST' });
-      refetch();
-    } catch {}
-    finally { setGettingReply(false); }
-  };
-
   return (
     <div className="space-y-2 pt-2 border-t border-border">
       {comments?.length > 0 && (
@@ -72,6 +72,9 @@ function CommentThread({ taskId }) {
             </div>
           ))}
         </div>
+      )}
+      {agentReplying && (
+        <p className="text-[10px] text-vmuted italic animate-pulse">Agent is replying...</p>
       )}
       {imagePreview && (
         <div className="relative inline-block">
@@ -93,10 +96,6 @@ function CommentThread({ taskId }) {
           placeholder="Add feedback… paste an image too"
           className="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent"
         />
-        <button onClick={handleGetReply} disabled={gettingReply}
-          className="px-2 py-1 text-xs text-accent hover:text-text disabled:opacity-40 transition-colors">
-          {gettingReply ? 'Thinking...' : 'Ask agent'}
-        </button>
         <button onClick={handlePost} disabled={posting || (!text.trim() && !imagePreview)}
           className="px-2 py-1 text-xs text-accent hover:text-text disabled:opacity-40 transition-colors">
           Send
@@ -139,6 +138,67 @@ function featureSummaryText(feature, tasks) {
   if (done > 0) return `${done} of ${total} tasks done`;
   if (total > 0) return `${total} task${total !== 1 ? 's' : ''} planned`;
   return 'No tasks yet';
+}
+
+// ---------------------------------------------------------------------------
+// ChangesDigest — "What changed" summary card with bulk approve
+// ---------------------------------------------------------------------------
+
+function ChangesDigest({ tasks, projectId, onMergeAll, mergingAll }) {
+  const recent = tasks.filter(t =>
+    t.status === 'done' && t.completed_at &&
+    new Date(t.completed_at.includes('T') ? t.completed_at : t.completed_at.replace(' ', 'T') + 'Z') > new Date(Date.now() - 24 * 60 * 60 * 1000)
+  );
+  const needsReview = tasks.filter(t => t.status === 'needs_review');
+
+  if (recent.length === 0 && needsReview.length === 0) return null;
+
+  const agentDone = recent.filter(t => !t.worker?.startsWith('human'));
+  const humanDone = recent.filter(t => t.worker?.startsWith('human'));
+  const totalMinutes = agentDone.reduce((s, t) => s + (t.actual_minutes || 0), 0);
+
+  return (
+    <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-text">What changed</h3>
+        {needsReview.length > 0 && (
+          <button onClick={onMergeAll} disabled={mergingAll}
+            className="px-3 py-1.5 text-xs bg-success text-white rounded-lg hover:bg-success/80 disabled:opacity-50 transition-colors font-medium">
+            {mergingAll ? 'Merging...' : `Approve all (${needsReview.length})`}
+          </button>
+        )}
+      </div>
+
+      {/* Summary line */}
+      <p className="text-xs text-muted">
+        {agentDone.length > 0 && (
+          <span>Agent completed <strong className="text-text">{agentDone.length} tasks</strong> ({totalMinutes}min)</span>
+        )}
+        {humanDone.length > 0 && (
+          <span>{agentDone.length > 0 ? '. ' : ''}You completed <strong className="text-text">{humanDone.length} tasks</strong></span>
+        )}
+        {needsReview.length > 0 && (
+          <span>. <strong className="text-warning">{needsReview.length} pending review</strong></span>
+        )}
+      </p>
+
+      {/* List of changes — compact */}
+      <div className="space-y-0.5">
+        {[...needsReview, ...recent.slice(0, 5)].map(t => (
+          <div key={t.id} className="flex items-center gap-2 text-xs">
+            <span className={t.status === 'needs_review' ? 'text-warning' : 'text-success'}>
+              {t.status === 'needs_review' ? '▸' : '✓'}
+            </span>
+            <span className={`flex-1 truncate ${t.status === 'done' ? 'text-muted' : 'text-text'}`}>{t.title}</span>
+            {t.actual_minutes && <span className="text-vmuted font-mono text-[10px]">{t.actual_minutes}m</span>}
+          </div>
+        ))}
+        {recent.length > 5 && (
+          <p className="text-[10px] text-vmuted ml-4">+{recent.length - 5} more</p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -644,8 +704,21 @@ export default function ProjectFeed() {
   const [renamingName, setRenamingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
   const [chatTask, setChatTask] = useState(null);
+  const [mergingAll, setMergingAll] = useState(false);
 
   const refetch = () => { refetchTimeline(); refetchFeatures(); };
+
+  const handleMergeAll = async () => {
+    setMergingAll(true);
+    try {
+      const result = await api('/tasks/bulk-approve', { method: 'POST', body: { project_id: id } });
+      if (result.errors?.length > 0) {
+        alert(`Merged ${result.merged}. ${result.errors.length} failed.`);
+      }
+      refetch();
+    } catch (e) { alert(e.message); }
+    finally { setMergingAll(false); }
+  };
 
   if (!timelineData) return (
     <div className="px-6 py-6">
@@ -805,7 +878,15 @@ export default function ProjectFeed() {
           <AgentActivitySummary tasks={allTasks} />
         </div>
 
-        {/* Section 3: Features */}
+        {/* Section 3: Changes digest */}
+        <ChangesDigest
+          tasks={allTasks}
+          projectId={id}
+          onMergeAll={handleMergeAll}
+          mergingAll={mergingAll}
+        />
+
+        {/* Section 4: Features */}
         {hasFeatures && (
           <div>
             <div className="flex items-center gap-2 mb-2">
@@ -841,7 +922,7 @@ export default function ProjectFeed() {
           </div>
         )}
 
-        {/* Section 4: Needs your attention */}
+        {/* Section 5: Needs your attention */}
         {attentionItems.length > 0 && (
           <div>
             <div className="flex items-center gap-2 mb-2">
@@ -858,7 +939,7 @@ export default function ProjectFeed() {
           </div>
         )}
 
-        {/* Section 5: Ideas */}
+        {/* Section 6: Ideas */}
         <IdeasSection projectId={id} onPromoted={refetch} />
 
         {/* Empty state (no features and no tasks) */}

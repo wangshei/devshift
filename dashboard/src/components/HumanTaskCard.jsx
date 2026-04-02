@@ -44,7 +44,7 @@ function CommentThread({ taskId }) {
   const [text, setText] = useState('');
   const [posting, setPosting] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
-  const [gettingReply, setGettingReply] = useState(false);
+  const [agentReplying, setAgentReplying] = useState(false);
 
   const handlePost = async () => {
     if (!text.trim() && !imagePreview) return;
@@ -57,6 +57,15 @@ function CommentThread({ taskId }) {
       setText('');
       setImagePreview(null);
       refetch();
+
+      // Poll for agent auto-reply (fires within a few seconds)
+      setAgentReplying(true);
+      let polls = 0;
+      const pollInterval = setInterval(() => {
+        refetch();
+        polls++;
+        if (polls >= 5) { clearInterval(pollInterval); setAgentReplying(false); }
+      }, 2000);
     } catch {}
     finally { setPosting(false); }
   };
@@ -76,15 +85,6 @@ function CommentThread({ taskId }) {
     }
   };
 
-  const handleGetReply = async () => {
-    setGettingReply(true);
-    try {
-      await api(`/comments/${taskId}/agent-reply`, { method: 'POST' });
-      refetch();
-    } catch {}
-    finally { setGettingReply(false); }
-  };
-
   return (
     <div className="space-y-2 pt-2 border-t border-border">
       {comments?.length > 0 && (
@@ -100,6 +100,9 @@ function CommentThread({ taskId }) {
             </div>
           ))}
         </div>
+      )}
+      {agentReplying && (
+        <p className="text-[10px] text-vmuted italic animate-pulse">Agent is replying...</p>
       )}
       {imagePreview && (
         <div className="relative inline-block">
@@ -121,10 +124,6 @@ function CommentThread({ taskId }) {
           placeholder="Add feedback… paste an image too"
           className="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent"
         />
-        <button onClick={handleGetReply} disabled={gettingReply}
-          className="px-2 py-1 text-xs text-accent hover:text-text disabled:opacity-40 transition-colors">
-          {gettingReply ? 'Thinking...' : 'Ask agent'}
-        </button>
         <button onClick={handlePost} disabled={posting || (!text.trim() && !imagePreview)}
           className="px-2 py-1 text-xs text-accent hover:text-text disabled:opacity-40 transition-colors">
           Send

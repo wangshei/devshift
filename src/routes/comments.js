@@ -45,6 +45,46 @@ router.post('/:taskId/comments', (req, res) => {
 
   const comment = db.prepare('SELECT * FROM task_comments WHERE id = ?').get(id);
   res.status(201).json(comment);
+
+  // Auto-trigger agent reply for review/failed tasks when user posts a comment
+  if (task && ['needs_review', 'failed'].includes(task.status) && (author || 'user') === 'user') {
+    // Fire and forget — don't block the comment response
+    setImmediate(async () => {
+      try {
+        const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
+        const comments = db.prepare(
+          'SELECT * FROM task_comments WHERE task_id = ? ORDER BY created_at ASC'
+        ).all(req.params.taskId);
+
+        const provider = db.prepare("SELECT * FROM providers WHERE id = 'claude_code' AND enabled = 1").get();
+        if (!provider) return;
+
+        const prompt = `You are responding to user feedback on a task.
+
+Task: ${task.title}
+Status: ${task.status}
+${task.result_summary ? 'Result: ' + task.result_summary.slice(0, 300) : ''}
+
+Feedback:
+${comments.slice(-3).map(c => `[${c.author}]: ${c.content}`).join('\n')}
+
+Respond briefly (under 100 words). If there's an actionable fix, say what needs to change.`;
+
+        const { execSync } = require('child_process');
+        const output = execSync(
+          `claude -p ${JSON.stringify(prompt)} --output-format text --model sonnet --effort low`,
+          { cwd: project?.repo_path || process.cwd(), encoding: 'utf-8', timeout: 30000 }
+        );
+
+        const replyId = require('uuid').v4();
+        db.prepare('INSERT INTO task_comments (id, task_id, author, content) VALUES (?, ?, ?, ?)')
+          .run(replyId, req.params.taskId, 'agent', output.trim());
+      } catch (e) {
+        const log = require('../utils/logger');
+        log.warn('[Comments] Auto-reply failed: ' + e.message);
+      }
+    });
+  }
 });
 
 // POST /api/comments/:taskId/agent-reply — get agent's response to recent comments

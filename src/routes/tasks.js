@@ -24,6 +24,46 @@ router.get('/', (req, res) => {
   res.json(tasks);
 });
 
+// POST /api/tasks/bulk-approve — approve all needs_review tasks for a project
+router.post('/bulk-approve', (req, res) => {
+  const db = getDb();
+  const { project_id } = req.body;
+  if (!project_id) return res.status(400).json({ error: 'project_id required' });
+
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(project_id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const tasks = db.prepare(
+    "SELECT * FROM tasks WHERE project_id = ? AND status = 'needs_review' AND branch_name IS NOT NULL"
+  ).all(project_id);
+
+  const gitUtils = require('../utils/git');
+  let merged = 0;
+  let errors = [];
+  const defaultBranch = gitUtils.getDefaultBranch(project.repo_path);
+
+  for (const task of tasks) {
+    try {
+      gitUtils.checkout(project.repo_path, defaultBranch);
+      gitUtils.mergeBranch(project.repo_path, task.branch_name);
+      try { gitUtils.deleteBranch(project.repo_path, task.branch_name); } catch {}
+      db.prepare("UPDATE tasks SET status = 'done', branch_name = NULL WHERE id = ?").run(task.id);
+      merged++;
+    } catch (e) {
+      errors.push({ task: task.title, error: e.message });
+    }
+  }
+
+  // Also mark needs_review tasks WITHOUT branches as done (already merged)
+  const orphaned = db.prepare(
+    "UPDATE tasks SET status = 'done' WHERE project_id = ? AND status = 'needs_review' AND branch_name IS NULL"
+  ).run(project_id);
+  merged += orphaned.changes;
+
+  gitUtils.checkout(project.repo_path, defaultBranch);
+  res.json({ merged, errors, total: tasks.length + orphaned.changes });
+});
+
 // GET /api/tasks/:id
 router.get('/:id', (req, res) => {
   const db = getDb();
