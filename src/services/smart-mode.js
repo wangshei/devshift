@@ -134,7 +134,7 @@ async function analyzeProject(projectId, analysisType = 'code_quality') {
     // Lightweight call — sonnet, no permissions needed, just thinking
     const { execSync } = require('child_process');
     const output = execSync(
-      `claude -p ${JSON.stringify(fullPrompt)} --output-format text --model sonnet`,
+      `claude -p ${JSON.stringify(fullPrompt)} --output-format text --model sonnet --effort low`,
       { cwd: project.repo_path, encoding: 'utf-8', timeout: 120000 }
     );
 

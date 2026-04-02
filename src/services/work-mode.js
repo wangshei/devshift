@@ -169,7 +169,7 @@ Return ONLY the JSON, no other text.`;
 
   try {
     // Use claude to improve the prompt
-    const output = execSync(`claude -p ${JSON.stringify(prompt)} --output-format text --model sonnet`, {
+    const output = execSync(`claude -p ${JSON.stringify(prompt)} --output-format text --model sonnet --effort low`, {
       cwd: project.repo_path,
       encoding: 'utf-8',
       timeout: 60000,

@@ -20,7 +20,7 @@ const activeSessions = new Map();
  */
 router.post('/send', (req, res) => {
   const db = getDb();
-  const { taskId, message, model } = req.body;
+  const { taskId, message, model, mode } = req.body;
 
   if (!message?.trim()) {
     return res.status(400).json({ error: 'Message required' });
@@ -38,19 +38,52 @@ router.post('/send', (req, res) => {
     }
   }
 
+  let enrichedMessage = message.trim();
+
+  // First message in session — add project context so Claude already knows the project
+  if (!sessionId && project) {
+    let context = `[Project: ${project.name} at ${project.repo_path}]`;
+
+    // Add brief memory context
+    try {
+      const { getWorkingMemory, formatMemoriesForPrompt } = require('../services/memory');
+      const memories = getWorkingMemory(project.id);
+      if (memories.length > 0) {
+        context += formatMemoriesForPrompt(memories, 'What you should know');
+      }
+    } catch {}
+
+    enrichedMessage = context + '\n\n' + enrichedMessage;
+  }
+
   // Build the claude command
-  const args = ['-p', message.trim(), '--output-format', 'stream-json', '--verbose'];
+  const args = ['-p', enrichedMessage, '--output-format', 'stream-json', '--verbose'];
 
   if (sessionId) {
     args.push('--resume', sessionId);
   }
 
-  // Use bypassPermissions so Claude can read/edit files
-  args.push('--permission-mode', 'bypassPermissions');
+  // Chat mode determines cost and capability:
+  // 'think' = cheap brainstorming, no tools, effort low (~$0.01/msg)
+  // 'plan'  = can read files but not edit (~$0.03/msg)
+  // 'agent' = full coding agent, can edit/run (~$0.05-0.15/msg)
+  const chatMode = mode || 'think';
 
-  const selectedModel = model || 'sonnet';
+  if (chatMode === 'agent') {
+    args.push('--permission-mode', 'bypassPermissions');
+  } else if (chatMode === 'plan') {
+    args.push('--allowedTools', 'Read,Glob,Grep');
+  } else {
+    // 'think' mode — no tools, just conversation. Cheapest.
+    args.push('--tools', '');
+    args.push('--effort', 'low');
+  }
+
+  const selectedModel = model || (chatMode === 'think' ? 'sonnet' : 'sonnet');
   if (selectedModel === 'opus') {
     args.push('--model', 'opus');
+  } else if (selectedModel === 'haiku') {
+    args.push('--model', 'haiku');
   } else {
     args.push('--model', 'sonnet');
   }

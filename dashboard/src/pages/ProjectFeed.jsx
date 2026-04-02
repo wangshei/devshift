@@ -8,7 +8,7 @@ import ChatPanel from '../components/ChatPanel';
 import Markdown from '../components/Markdown';
 
 // ---------------------------------------------------------------------------
-// Shared helpers kept from original
+// Shared helpers
 // ---------------------------------------------------------------------------
 
 function CommentThread({ taskId }) {
@@ -127,8 +127,22 @@ function cleanSummary(text) {
   return s.slice(0, 300);
 }
 
+function featureSummaryText(feature, tasks) {
+  const total = tasks.length;
+  const done = tasks.filter(t => t.status === 'done').length;
+  const inProgress = tasks.filter(t => t.status === 'in_progress').length;
+  const needsReview = tasks.filter(t => t.status === 'needs_review').length;
+
+  if (needsReview > 0) return `${needsReview} task${needsReview !== 1 ? 's' : ''} ready for review`;
+  if (inProgress > 0) return `Agent is working on this — ${done} of ${total} done`;
+  if (done === total && total > 0) return `All ${total} tasks complete`;
+  if (done > 0) return `${done} of ${total} tasks done`;
+  if (total > 0) return `${total} task${total !== 1 ? 's' : ''} planned`;
+  return 'No tasks yet';
+}
+
 // ---------------------------------------------------------------------------
-// FeatureCard — the main building block of the new view
+// FeatureCard — the main building block of the feature-centric view
 // ---------------------------------------------------------------------------
 
 function FeatureCard({ feature, tasks, onAction, onChat }) {
@@ -154,8 +168,6 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
     : inProgress > 0 ? 'text-accent'
     : done === total && total > 0 ? 'text-success'
     : 'text-vmuted';
-
-  const isComplete = done === total && total > 0 && needsReview === 0;
 
   const handleShowDiff = async (task) => {
     if (diff && reviewTask?.id === task.id) { setShowDiff(!showDiff); return; }
@@ -189,7 +201,7 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
   };
 
   return (
-    <div className={`bg-card border rounded-lg overflow-hidden transition-opacity ${isComplete ? 'opacity-60' : ''} ${
+    <div className={`bg-card border rounded-lg overflow-hidden ${
       needsReview > 0 ? 'border-warning/30' : inProgress > 0 ? 'border-accent/20' : 'border-border'
     }`}>
       {/* Summary row */}
@@ -197,7 +209,7 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
         <div className="flex items-center gap-3">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-sm font-medium ${isComplete ? 'text-muted' : 'text-text'}`}>
+              <span className="text-sm font-medium text-text">
                 {feature.title}
               </span>
               <span className={`text-[10px] font-mono ${statusColor}`}>{statusLabel}</span>
@@ -205,6 +217,7 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
                 <span className="w-1.5 h-1.5 rounded-full bg-warning inline-block" />
               )}
             </div>
+            <p className="text-xs text-muted mt-0.5">{featureSummaryText(feature, tasks)}</p>
             {/* Progress bar */}
             <div className="flex items-center gap-2 mt-1.5">
               <div className="flex-1 h-1.5 bg-bg rounded-full overflow-hidden">
@@ -220,7 +233,7 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
             {needsReview > 0 && !expanded && (
               <button
                 onClick={e => { e.stopPropagation(); setExpanded(true); }}
-                className="px-2.5 py-1 text-[10px] font-mono bg-warning/10 text-warning border border-warning/20 rounded-md hover:bg-warning/20 transition-colors"
+                className="px-3 py-1.5 text-xs font-medium bg-warning/10 text-warning border border-warning/20 rounded-md hover:bg-warning/20 transition-colors"
               >
                 Review ({needsReview})
               </button>
@@ -230,9 +243,22 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
         </div>
       </div>
 
-      {/* Expanded: individual tasks */}
+      {/* Expanded: description, tasks checklist, comments, chat */}
       {expanded && (
         <div className="border-t border-border">
+          {/* Description & assumptions */}
+          {(feature.description || feature.assumptions) && (
+            <div className="px-4 py-2.5 bg-bg/50 border-b border-border">
+              {feature.description && (
+                <p className="text-xs text-muted leading-relaxed">{feature.description}</p>
+              )}
+              {feature.assumptions && (
+                <p className="text-[10px] text-vmuted mt-1 italic">Assumptions: {feature.assumptions}</p>
+              )}
+            </div>
+          )}
+
+          {/* Tasks as mini checklist */}
           {tasks.length === 0 ? (
             <div className="px-4 py-3 text-xs text-vmuted italic">No tasks yet.</div>
           ) : (
@@ -263,9 +289,19 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
                       {t.actual_minutes && (
                         <span className="text-[10px] font-mono text-vmuted">{t.actual_minutes}m</span>
                       )}
+                      {/* View how agent did it — opens chat with session context */}
+                      {t.status === 'done' && t.session_id && (
+                        <button
+                          onClick={() => navigate(`/chat/${id}?session=${t.session_id}&title=${encodeURIComponent(t.title)}`)}
+                          className="text-[10px] text-vmuted hover:text-accent transition-colors"
+                          title="View how the agent completed this task"
+                        >
+                          View session
+                        </button>
+                      )}
                     </div>
 
-                    {/* Review actions inline */}
+                    {/* Review actions inline for needs_review tasks */}
                     {isReview && (
                       <div className="flex items-center gap-2 mt-2 ml-4">
                         <button
@@ -316,6 +352,23 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
           {showDiff && diff && reviewTask && (
             <SplitDiffViewer diff={diff.diff} stat={diff.stat} />
           )}
+
+          {/* Comment thread for the feature (use feature task id) */}
+          <div className="px-4 py-2.5 border-t border-border">
+            <CommentThread taskId={feature.id} />
+          </div>
+
+          {/* Chat about this feature */}
+          {onChat && (
+            <div className="px-4 pb-3">
+              <button
+                onClick={() => onChat({ id: feature.id, title: feature.title })}
+                className="px-3 py-1.5 text-xs bg-accent/10 text-accent border border-accent/20 rounded-md hover:bg-accent/20 transition-colors"
+              >
+                Chat about this
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -323,7 +376,54 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
 }
 
 // ---------------------------------------------------------------------------
-// IdeasSection
+// CompletedFeaturesSummary — collapses completed features into one line
+// ---------------------------------------------------------------------------
+
+function CompletedFeaturesSummary({ features, tasksByFeature }) {
+  const [expanded, setExpanded] = useState(false);
+  const count = features.length;
+
+  if (count === 0) return null;
+
+  const totalTasks = features.reduce((sum, f) => sum + (tasksByFeature[f.id]?.length || 0), 0);
+  const totalMinutes = features.reduce((sum, f) => {
+    return sum + (tasksByFeature[f.id] || []).reduce((s, t) => s + (t.actual_minutes || 0), 0);
+  }, 0);
+
+  return (
+    <div className="bg-card border border-border rounded-lg overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-bg/50 transition-colors"
+      >
+        <span className="text-success text-xs">✓</span>
+        <span className="text-xs text-muted flex-1">
+          {count} feature{count !== 1 ? 's' : ''} completed
+          {totalTasks > 0 && <span className="text-vmuted"> — {totalTasks} tasks</span>}
+          {totalMinutes > 0 && <span className="text-vmuted"> — {totalMinutes}m</span>}
+        </span>
+        <span className="text-vmuted text-xs">{expanded ? '▴' : '▾'}</span>
+      </button>
+      {expanded && (
+        <div className="border-t border-border divide-y divide-border">
+          {features.map(f => {
+            const fTasks = tasksByFeature[f.id] || [];
+            return (
+              <div key={f.id} className="px-4 py-2 flex items-center gap-2">
+                <span className="text-success text-xs">✓</span>
+                <span className="text-xs text-muted flex-1">{f.title}</span>
+                <span className="text-[10px] font-mono text-vmuted">{fTasks.length} tasks</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// IdeasSection — better styled
 // ---------------------------------------------------------------------------
 
 function IdeasSection({ projectId, onPromoted }) {
@@ -364,21 +464,21 @@ function IdeasSection({ projectId, onPromoted }) {
   const list = Array.isArray(ideas) ? ideas : [];
 
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-2">
-        <div className="h-px flex-1 bg-border" />
-        <span className="text-[10px] font-mono text-vmuted uppercase tracking-wider">Ideas</span>
-        <div className="h-px flex-1 bg-border" />
+    <div className="bg-card border border-border rounded-lg overflow-hidden">
+      <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+        <span className="text-accent text-sm">+</span>
+        <h3 className="text-sm font-medium text-text">Ideas</h3>
+        <span className="text-[10px] font-mono text-vmuted">{list.length}</span>
       </div>
 
-      <div className="space-y-1 mb-2">
+      <div className="divide-y divide-border">
         {list.length === 0 && (
-          <p className="text-xs text-vmuted italic px-1">No ideas yet — capture something below.</p>
+          <p className="text-xs text-vmuted italic px-4 py-3">No ideas yet — capture something below.</p>
         )}
         {list.map(idea => (
-          <div key={idea.id} className="flex items-center gap-2 px-3 py-2 bg-card border border-border rounded-lg group">
+          <div key={idea.id} className="flex items-center gap-2 px-4 py-2.5 group">
             <span className="text-vmuted text-xs">◌</span>
-            <span className="flex-1 text-xs text-muted">{idea.title}</span>
+            <span className="flex-1 text-xs text-text">{idea.title}</span>
             <button
               onClick={() => handlePromote(idea.id)}
               disabled={promoting === idea.id}
@@ -398,31 +498,93 @@ function IdeasSection({ projectId, onPromoted }) {
       </div>
 
       {/* Quick add */}
-      <div className="flex gap-2">
-        <input
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-          placeholder="Capture an idea..."
-          className="flex-1 bg-bg border border-border rounded px-3 py-1.5 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent"
-        />
-        <button
-          onClick={handleSubmit}
-          disabled={submitting || !text.trim()}
-          className="px-3 py-1.5 text-xs text-accent hover:text-text disabled:opacity-40 transition-colors border border-border rounded"
-        >
-          Add
-        </button>
+      <div className="px-4 py-3 border-t border-border">
+        <div className="flex gap-2">
+          <input
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+            placeholder="Capture an idea..."
+            className="flex-1 bg-bg border border-border rounded px-3 py-1.5 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent"
+          />
+          <button
+            onClick={handleSubmit}
+            disabled={submitting || !text.trim()}
+            className="px-3 py-1.5 text-xs text-accent hover:text-text disabled:opacity-40 transition-colors border border-border rounded"
+          >
+            Add
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// StatusSummary — "What's happening" section
+// GoalsDisplay — shows project goals at top
 // ---------------------------------------------------------------------------
 
-function StatusSummary({ features, tasks, goals }) {
+function GoalsDisplay({ goals }) {
+  const list = Array.isArray(goals) ? goals : [];
+  if (list.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {list.map(g => (
+        <div key={g.id} className="flex items-center gap-2 px-3 py-1.5 bg-accent/5 border border-accent/15 rounded-lg">
+          <span className="text-xs text-text font-medium">{g.title || g.text || g.description}</span>
+          {(g.metric || g.target) && (
+            <span className="text-[10px] font-mono text-accent">
+              {g.metric && g.target ? `${g.metric}: ${g.target}` : g.metric || g.target}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AgentActivitySummary — one-line summary of agent work
+// ---------------------------------------------------------------------------
+
+function AgentActivitySummary({ tasks }) {
+  const now = Date.now();
+  const dayAgo = now - 24 * 60 * 60 * 1000;
+
+  const completedToday = tasks.filter(t => {
+    if (t.status !== 'done' || !t.completed_at) return false;
+    try {
+      const d = new Date(t.completed_at.includes('T') ? t.completed_at : t.completed_at.replace(' ', 'T') + 'Z');
+      return d.getTime() > dayAgo;
+    } catch { return false; }
+  });
+
+  if (completedToday.length === 0) return null;
+
+  const totalMinutes = completedToday.reduce((sum, t) => sum + (t.actual_minutes || 0), 0);
+  const totalCost = completedToday.reduce((sum, t) => sum + (t.actual_cost || 0), 0);
+
+  let detail = '';
+  if (totalMinutes > 0) detail += `${totalMinutes} min`;
+  if (totalCost > 0) detail += `${detail ? ', ' : ''}$${totalCost.toFixed(2)}`;
+
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted">
+      <span className="text-success">●</span>
+      <span>
+        Agent completed {completedToday.length} task{completedToday.length !== 1 ? 's' : ''} today
+        {detail && <span className="text-vmuted"> ({detail})</span>}
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// StatusSummary — "What's happening" section (prominent)
+// ---------------------------------------------------------------------------
+
+function StatusSummary({ features, tasks }) {
   const inProgressTasks = tasks.filter(t => t.status === 'in_progress');
   const needsReviewTasks = tasks.filter(t => t.status === 'needs_review');
   const completedThisWeek = (() => {
@@ -436,11 +598,6 @@ function StatusSummary({ features, tasks, goals }) {
     });
   })();
 
-  const completedFeatures = features.filter(f => {
-    const fTasks = tasks.filter(t => t.feature_id === f.id);
-    return fTasks.length > 0 && fTasks.every(t => t.status === 'done');
-  });
-
   let primary = '';
   let secondary = '';
 
@@ -452,7 +609,7 @@ function StatusSummary({ features, tasks, goals }) {
   } else if (needsReviewTasks.length > 0) {
     primary = `${needsReviewTasks.length} item${needsReviewTasks.length !== 1 ? 's' : ''} waiting for your review.`;
   } else if (completedThisWeek.length > 0) {
-    primary = `All caught up.`;
+    primary = 'All caught up.';
     secondary = `${completedThisWeek.length} task${completedThisWeek.length !== 1 ? 's' : ''} completed this week.`;
   } else {
     primary = 'No active work.';
@@ -463,23 +620,10 @@ function StatusSummary({ features, tasks, goals }) {
     secondary = `${needsReviewTasks.length} item${needsReviewTasks.length !== 1 ? 's' : ''} need your review.`;
   }
 
-  const goalList = Array.isArray(goals) ? goals : [];
-
   return (
-    <div className="bg-card border border-border rounded-lg px-4 py-3 space-y-2">
-      <div>
-        <p className="text-sm text-text font-medium">{primary}</p>
-        {secondary && <p className="text-xs text-muted mt-0.5">{secondary}</p>}
-      </div>
-      {goalList.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 pt-1 border-t border-border">
-          {goalList.map(g => (
-            <span key={g.id} className="text-[10px] px-2 py-0.5 bg-accent/10 text-accent rounded-full font-mono">
-              {g.title || g.text || g.description}
-            </span>
-          ))}
-        </div>
-      )}
+    <div>
+      <p className="text-lg font-semibold text-text leading-snug">{primary}</p>
+      {secondary && <p className="text-sm text-muted mt-1">{secondary}</p>}
     </div>
   );
 }
@@ -537,24 +681,35 @@ export default function ProjectFeed() {
 
   // Orphaned reviews: needs_review tasks with no feature
   const orphanReviews = orphanTasks.filter(t => t.status === 'needs_review');
-  // Human tasks: task_type === 'human'
-  const humanTaskItems = (humanTasks || []).filter(t => t.task_type === 'human' || t.plan_status === 'pending_review');
-
-  // Attention items: humanTaskItems + orphanReviews not already in humanTasks
+  // Human tasks
   const humanTaskIds = new Set((humanTasks || []).map(t => t.id));
   const attentionItems = [
     ...(humanTasks || []),
     ...orphanReviews.filter(t => !humanTaskIds.has(t.id)),
   ];
 
-  // Sort features: incomplete/in-progress first, complete last
-  const sortedFeatures = [...featureList].sort((a, b) => {
+  // Separate completed vs active features
+  const completedFeatures = featureList.filter(f => {
+    const fTasks = tasksByFeature[f.id] || [];
+    return fTasks.length > 0 && fTasks.every(t => t.status === 'done');
+  });
+  const activeFeatures = featureList.filter(f => {
+    const fTasks = tasksByFeature[f.id] || [];
+    return !(fTasks.length > 0 && fTasks.every(t => t.status === 'done'));
+  });
+
+  // Sort active features: needs_review first, then in_progress, then planned
+  const sortedActiveFeatures = [...activeFeatures].sort((a, b) => {
     const aTasks = tasksByFeature[a.id] || [];
     const bTasks = tasksByFeature[b.id] || [];
-    const aDone = aTasks.length > 0 && aTasks.every(t => t.status === 'done');
-    const bDone = bTasks.length > 0 && bTasks.every(t => t.status === 'done');
-    if (aDone && !bDone) return 1;
-    if (!aDone && bDone) return -1;
+    const aReview = aTasks.some(t => t.status === 'needs_review');
+    const bReview = bTasks.some(t => t.status === 'needs_review');
+    const aActive = aTasks.some(t => t.status === 'in_progress');
+    const bActive = bTasks.some(t => t.status === 'in_progress');
+    if (aReview && !bReview) return -1;
+    if (!aReview && bReview) return 1;
+    if (aActive && !bActive) return -1;
+    if (!aActive && bActive) return 1;
     return 0;
   });
 
@@ -641,14 +796,16 @@ export default function ProjectFeed() {
       {/* Main scrollable content */}
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5 pb-32">
 
-        {/* Section 1: What's happening */}
-        <StatusSummary
-          features={featureList}
-          tasks={allTasks}
-          goals={goalList}
-        />
+        {/* Section 1: Goals */}
+        <GoalsDisplay goals={goalList} />
 
-        {/* Section 2: Features */}
+        {/* Section 2: What's happening — large & prominent */}
+        <div className="space-y-2">
+          <StatusSummary features={featureList} tasks={allTasks} />
+          <AgentActivitySummary tasks={allTasks} />
+        </div>
+
+        {/* Section 3: Features */}
         {hasFeatures && (
           <div>
             <div className="flex items-center gap-2 mb-2">
@@ -657,7 +814,7 @@ export default function ProjectFeed() {
               <div className="h-px flex-1 bg-border" />
             </div>
             <div className="flex flex-col gap-2">
-              {sortedFeatures.map(feature => (
+              {sortedActiveFeatures.map(feature => (
                 <FeatureCard
                   key={feature.id}
                   feature={feature}
@@ -677,11 +834,14 @@ export default function ProjectFeed() {
                   onChat={setChatTask}
                 />
               )}
+
+              {/* Completed features collapsed into summary */}
+              <CompletedFeaturesSummary features={completedFeatures} tasksByFeature={tasksByFeature} />
             </div>
           </div>
         )}
 
-        {/* Section 3: Needs your attention */}
+        {/* Section 4: Needs your attention */}
         {attentionItems.length > 0 && (
           <div>
             <div className="flex items-center gap-2 mb-2">
@@ -698,7 +858,7 @@ export default function ProjectFeed() {
           </div>
         )}
 
-        {/* Section 4: Ideas */}
+        {/* Section 5: Ideas */}
         <IdeasSection projectId={id} onPromoted={refetch} />
 
         {/* Empty state (no features and no tasks) */}

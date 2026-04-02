@@ -12,9 +12,23 @@ export default function MyWork() {
 
   const { activeWork, planReviews, codeReviews, analyses, humanTasks, failed, recentlyCompleted, counts } = data;
 
+  // Merge all reviewable items into one queue
+  const reviewQueue = [
+    ...planReviews.map(t => ({ ...t, _kind: 'plan' })),
+    ...codeReviews.map(t => ({ ...t, _kind: 'code' })),
+    ...analyses.map(t => ({ ...t, _kind: 'analysis' })),
+    ...failed.map(t => ({ ...t, _kind: 'failed' })),
+  ];
+
+  // Suggested = human tasks the PM thinks you should work on
+  const suggested = humanTasks;
+
+  // Compact recently-done summary
+  const agentDone = recentlyCompleted.filter(t => !t.worker?.startsWith('human'));
+  const humanDone = recentlyCompleted.filter(t => t.worker?.startsWith('human'));
+
   return (
-    <div className="max-w-2xl mx-auto px-6 py-6 space-y-6">
-      {/* Chat panel overlay */}
+    <div className="max-w-2xl mx-auto px-6 py-6 space-y-8">
       {chatTask && (
         <div className="fixed inset-y-0 right-0 w-96 z-50 shadow-xl">
           <ChatPanel
@@ -29,76 +43,93 @@ export default function MyWork() {
 
       <h1 className="text-lg font-semibold">My Work</h1>
 
-      {/* Active work */}
+      {/* 1. Active sessions */}
       <section>
-        <h2 className="text-xs font-mono text-vmuted uppercase tracking-wider mb-2">
-          Your active work ({counts.activeWork})
-        </h2>
+        <SectionHeader label="Your active sessions" count={activeWork.length} />
         {activeWork.length === 0 ? (
-          <p className="text-xs text-vmuted py-4">No active work. Pick a task below to start.</p>
+          <p className="text-xs text-vmuted py-3">Nothing active right now.</p>
         ) : (
           <div className="space-y-2">
             {activeWork.map(t => (
-              <ActiveWorkCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
+              <ActiveSessionCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
             ))}
           </div>
         )}
       </section>
 
-      {/* Needs attention */}
-      {counts.needsAttention > 0 && (
+      {/* 2. Review queue */}
+      {reviewQueue.length > 0 && (
         <section>
-          <h2 className="text-xs font-mono text-warning uppercase tracking-wider mb-2">
-            Needs your attention ({counts.needsAttention})
-          </h2>
+          <SectionHeader label="Review queue" count={reviewQueue.length} accent />
+          <div className="space-y-2">
+            {reviewQueue.map(t => (
+              <ReviewCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} navigate={navigate} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* 3. Suggested */}
+      {suggested.length > 0 && (
+        <section>
+          <SectionHeader label="Suggested" count={suggested.length} />
           <div className="space-y-1.5">
-            {planReviews.length > 0 && (
-              <AttentionGroup label="Plans to approve" items={planReviews} type="plan" navigate={navigate} onChat={setChatTask} />
-            )}
-            {codeReviews.length > 0 && (
-              <AttentionGroup label="Code to review" items={codeReviews} type="review" navigate={navigate} onChat={setChatTask} />
-            )}
-            {analyses.length > 0 && (
-              <AttentionGroup label="Analysis results" items={analyses} type="analysis" navigate={navigate} onChat={setChatTask} />
-            )}
-            {humanTasks.length > 0 && (
-              <AttentionGroup label="Tasks for you" items={humanTasks} type="human" navigate={navigate} onChat={setChatTask} />
-            )}
-            {failed.length > 0 && (
-              <AttentionGroup label="Failed" items={failed} type="failed" navigate={navigate} onChat={setChatTask} />
+            {suggested.map(t => (
+              <SuggestedCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* 4. Recently done */}
+      {recentlyCompleted.length > 0 && (
+        <section>
+          <SectionHeader label="Recently done" />
+          <div className="px-3 py-2.5 bg-card border border-border rounded-lg">
+            <p className="text-xs text-muted">
+              {agentDone.length > 0 && (
+                <span><span className="text-text font-medium">{agentDone.length}</span> task{agentDone.length !== 1 ? 's' : ''} completed by agent</span>
+              )}
+              {agentDone.length > 0 && humanDone.length > 0 && <span>, </span>}
+              {humanDone.length > 0 && (
+                <span><span className="text-text font-medium">{humanDone.length}</span> by you</span>
+              )}
+              <span className="text-vmuted"> — today</span>
+            </p>
+            {recentlyCompleted.length <= 8 && (
+              <div className="mt-2 space-y-0.5">
+                {recentlyCompleted.map(t => (
+                  <div key={t.id} className="flex items-center gap-2 text-xs text-vmuted">
+                    <span className="text-success text-[10px]">✓</span>
+                    <span className="truncate flex-1">{t.title}</span>
+                    <span className="font-mono text-[10px] shrink-0">{t.worker?.startsWith('human') ? 'you' : 'agent'}</span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </section>
       )}
 
-      {/* Recently completed */}
-      {recentlyCompleted.length > 0 && (
-        <section>
-          <h2 className="text-xs font-mono text-vmuted uppercase tracking-wider mb-2">
-            Recently completed ({counts.recentlyCompleted})
-          </h2>
-          <div className="space-y-1">
-            {recentlyCompleted.map(t => (
-              <div key={t.id} className="flex items-center gap-3 px-3 py-2 bg-card border border-border rounded-lg text-xs">
-                <span className="text-success">✓</span>
-                <span className="text-text flex-1 truncate">{t.title}</span>
-                <span className="text-vmuted font-mono">{t.project_name}</span>
-                <span className="text-vmuted font-mono">
-                  {t.worker?.startsWith('human') ? 'you' : 'agent'}
-                </span>
-                {t.actual_minutes != null && (
-                  <span className="text-vmuted font-mono">{t.actual_minutes}m</span>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
+      {/* Empty state */}
+      {activeWork.length === 0 && reviewQueue.length === 0 && suggested.length === 0 && recentlyCompleted.length === 0 && (
+        <div className="text-center py-12 text-vmuted text-sm">
+          Nothing needs your attention. All clear.
+        </div>
       )}
     </div>
   );
 }
 
-function ActiveWorkCard({ task, onAction, onChat }) {
+function SectionHeader({ label, count, accent }) {
+  return (
+    <h2 className={`text-xs font-mono uppercase tracking-wider mb-2 ${accent ? 'text-warning' : 'text-vmuted'}`}>
+      {label}{count != null ? ` (${count})` : ''}
+    </h2>
+  );
+}
+
+function ActiveSessionCard({ task, onAction, onChat }) {
   const [handoffNote, setHandoffNote] = useState('');
   const [acting, setActing] = useState(false);
 
@@ -110,89 +141,205 @@ function ActiveWorkCard({ task, onAction, onChat }) {
     }
   };
 
-  const handleHandoff = async (done) => {
+  const handleHandoff = async () => {
     setActing(true);
     try {
-      await api(`/tasks/${task.id}/handoff`, { method: 'POST', body: { note: handoffNote, done } });
+      await api(`/tasks/${task.id}/handoff`, { method: 'POST', body: { note: handoffNote, done: false } });
       onAction?.();
     } catch {}
     finally { setActing(false); }
   };
 
   return (
-    <div className="bg-card border border-accent/20 rounded-lg px-4 py-3 space-y-2">
-      <div className="flex items-center gap-2">
+    <div className="bg-card border border-accent/30 rounded-lg px-4 py-3">
+      <div className="flex items-center gap-2 mb-3">
         <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-        <span className="text-sm text-text flex-1">{task.title}</span>
+        <span className="text-sm text-text flex-1 truncate">{task.title}</span>
         <span className="text-[10px] font-mono text-vmuted">{task.project_name}</span>
       </div>
       {task.branch_name && (
-        <p className="text-[10px] font-mono text-vmuted">branch: {task.branch_name}</p>
+        <p className="text-[10px] font-mono text-vmuted mb-2">branch: {task.branch_name}</p>
       )}
       <div className="flex items-center gap-2">
         <button onClick={handleContinue}
           className="px-3 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent/80 transition-colors font-medium">
-          Continue in terminal
+          Continue
+        </button>
+        <button onClick={handleHandoff} disabled={acting}
+          className="px-3 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
+          Hand off
         </button>
         {onChat && (
           <button onClick={() => onChat(task)}
-            className="px-3 py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors">
+            className="px-3 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
             Chat
           </button>
         )}
         <input value={handoffNote} onChange={e => setHandoffNote(e.target.value)}
-          placeholder="Note for agent (optional)"
+          placeholder="Note for agent..."
           className="flex-1 bg-bg border border-border rounded px-2 py-1.5 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent" />
-        <button onClick={() => handleHandoff(false)} disabled={acting}
-          className="px-3 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
-          Hand off
-        </button>
-        <button onClick={() => handleHandoff(true)} disabled={acting}
-          className="px-3 py-1.5 text-xs bg-success text-white rounded-lg hover:bg-success/80 transition-colors">
-          Done
-        </button>
       </div>
     </div>
   );
 }
 
-function AttentionGroup({ label, items, type, navigate, onChat }) {
-  const colors = {
-    plan: 'text-accent',
-    review: 'text-warning',
-    analysis: 'text-research',
-    human: 'text-muted',
-    failed: 'text-error',
+function ReviewCard({ task, onAction, onChat, navigate }) {
+  const [acting, setActing] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
+  const [diff, setDiff] = useState(null);
+  const [loadingDiff, setLoadingDiff] = useState(false);
+
+  const kind = task._kind;
+  const summary = task.result_summary
+    ? task.result_summary.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim().slice(0, 120)
+    : null;
+
+  const handleViewChanges = async () => {
+    if (kind === 'plan') {
+      navigate(`/project/${task.project_id}`);
+      return;
+    }
+    if (diff) { setShowDiff(!showDiff); return; }
+    if (!task.branch_name) {
+      navigate(`/project/${task.project_id}`);
+      return;
+    }
+    setLoadingDiff(true);
+    try {
+      const d = await api(`/tasks/${task.id}/diff`);
+      setDiff(d);
+      setShowDiff(true);
+    } catch {}
+    finally { setLoadingDiff(false); }
   };
-  const icons = {
-    plan: '◇',
-    review: '▸',
-    analysis: '◆',
-    human: '○',
-    failed: '✕',
+
+  const handleApprove = async () => {
+    setActing(true);
+    try {
+      if (kind === 'plan') {
+        await api(`/tasks/${task.id}/approve-plan`, { method: 'POST' });
+      } else {
+        await api(`/tasks/${task.id}/approve`, { method: 'POST' });
+      }
+      onAction?.();
+    } catch (e) {
+      alert(e.message);
+    } finally { setActing(false); }
+  };
+
+  const handleRetry = async () => {
+    setActing(true);
+    try {
+      await api(`/tasks/${task.id}`, { method: 'PATCH', body: { status: 'queued' } });
+      onAction?.();
+    } catch {}
+    finally { setActing(false); }
+  };
+
+  const handleDismiss = async () => {
+    setActing(true);
+    try {
+      await api(`/tasks/${task.id}/dismiss`, { method: 'POST' });
+      onAction?.();
+    } catch {}
+    finally { setActing(false); }
+  };
+
+  const kindLabel = { plan: 'Plan', code: 'Code review', analysis: 'Analysis', failed: 'Failed' }[kind];
+  const kindColor = { plan: 'text-accent', code: 'text-warning', analysis: 'text-research', failed: 'text-error' }[kind];
+  const borderColor = { plan: 'border-accent/20', code: 'border-warning/20', analysis: 'border-research/20', failed: 'border-error/20' }[kind];
+
+  // Try to show a clean feature-level name
+  const displayName = task.feature_name || task.title;
+  const changeSummary = summary && !summary.startsWith('[') && !summary.startsWith('{')
+    ? summary
+    : task.review_instructions?.slice(0, 120) || null;
+
+  return (
+    <div className={`bg-card border ${borderColor} rounded-lg px-4 py-3`}>
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className={`text-[10px] font-mono uppercase ${kindColor}`}>{kindLabel}</span>
+            <span className="text-[10px] font-mono text-vmuted">{task.project_name}</span>
+          </div>
+          <p className="text-sm text-text truncate">{displayName}</p>
+          {changeSummary && (
+            <p className="text-xs text-muted mt-0.5 truncate">{changeSummary}</p>
+          )}
+        </div>
+
+        {/* Primary actions — always visible, no expanding */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {kind === 'failed' ? (
+            <>
+              <button onClick={handleRetry} disabled={acting}
+                className="px-3 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
+                Retry
+              </button>
+              <button onClick={handleDismiss} disabled={acting}
+                className="px-3 py-1.5 text-xs text-error/70 hover:text-error border border-error/20 rounded-lg transition-colors">
+                Dismiss
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={handleViewChanges} disabled={loadingDiff}
+                className="px-3 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
+                {loadingDiff ? '...' : showDiff ? 'Hide' : 'View changes'}
+              </button>
+              <button onClick={handleApprove} disabled={acting}
+                className="px-3 py-1.5 text-xs bg-success text-white rounded-lg hover:bg-success/80 disabled:opacity-50 transition-colors font-medium">
+                {acting ? '...' : 'Approve'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Inline diff */}
+      {showDiff && diff && (
+        <div className="mt-3 pt-3 border-t border-border">
+          <pre className="text-[11px] font-mono text-muted overflow-x-auto max-h-64 overflow-y-auto leading-relaxed whitespace-pre-wrap">{diff.stat}</pre>
+          <pre className="mt-2 text-[11px] font-mono text-muted overflow-x-auto max-h-96 overflow-y-auto leading-relaxed whitespace-pre-wrap">{diff.diff}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SuggestedCard({ task, onAction, onChat }) {
+  const [acting, setActing] = useState(false);
+
+  const handleStartWork = async () => {
+    setActing(true);
+    try {
+      const result = await api(`/tasks/${task.id}/start-work`, { method: 'POST' });
+      if (result.error) alert(result.error);
+      onAction?.();
+    } catch (e) {
+      alert(e.message);
+    } finally { setActing(false); }
   };
 
   return (
-    <div>
-      <p className={`text-[10px] font-mono ${colors[type]} mb-1`}>{label}</p>
-      {items.map(t => (
-        <div key={t.id} className="flex items-center gap-1 mb-1">
-          <button
-            onClick={() => navigate(`/project/${t.project_id}`)}
-            className="flex-1 flex items-center gap-2 px-3 py-2 bg-card border border-border rounded-lg hover:border-accent/20 transition-colors text-left">
-            <span className={`text-xs ${colors[type]}`}>{icons[type]}</span>
-            <span className="text-xs text-text flex-1 truncate">{t.title}</span>
-            <span className="text-[10px] font-mono text-vmuted">{t.project_name}</span>
+    <div className="flex items-center gap-3 bg-card border border-border rounded-lg px-4 py-2.5 hover:border-accent/20 transition-colors">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-text truncate">{task.title}</p>
+        <span className="text-[10px] font-mono text-vmuted">{task.project_name}</span>
+      </div>
+      <div className="flex items-center gap-1.5 shrink-0">
+        {onChat && (
+          <button onClick={() => onChat(task)}
+            className="px-2.5 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
+            Chat
           </button>
-          {onChat && (
-            <button
-              onClick={() => onChat(t)}
-              className="px-2.5 py-2 text-xs bg-card border border-border rounded-lg text-muted hover:text-text transition-colors shrink-0">
-              Chat
-            </button>
-          )}
-        </div>
-      ))}
+        )}
+        <button onClick={handleStartWork} disabled={acting}
+          className="px-3 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition-colors font-medium">
+          Work on this
+        </button>
+      </div>
     </div>
   );
 }

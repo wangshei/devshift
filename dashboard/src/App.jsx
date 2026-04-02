@@ -8,6 +8,7 @@ import Settings from './pages/Settings';
 import Setup from './pages/Setup';
 import Timeline from './pages/Timeline';
 import MyWork from './pages/MyWork';
+import ProductMap from './pages/ProductMap';
 import ThemeToggle from './components/ThemeToggle';
 
 function App() {
@@ -57,6 +58,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/project/:id" element={<ProjectFeed />} />
+            <Route path="/project/:id/map" element={<ProductMap />} />
             <Route path="/my-work" element={<MyWork />} />
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/settings" element={<Settings />} />
@@ -70,6 +72,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/project/:id" element={<ProjectFeed />} />
+            <Route path="/project/:id/map" element={<ProductMap />} />
             <Route path="/my-work" element={<MyWork />} />
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/settings" element={<Settings />} />

@@ -5,7 +5,7 @@ const { PORT, DATA_DIR } = require('./utils/config');
 const log = require('./utils/logger');
 const { migrate } = require('./db');
 const scheduler = require('./services/scheduler');
-const { getCreditUsage } = require('./services/planner');
+const { getCreditUsage, getBudgetStatus } = require('./services/planner');
 const telegram = require('./services/telegram');
 
 const app = express();
@@ -68,7 +68,7 @@ app.get('/api/credits', (req, res) => {
       rateLimitedUntil: prov.rate_limited_until,
     };
   });
-  res.json({ ...getCreditUsage(), agentTasksDone, humanTasksDone, providerBreakdown });
+  res.json({ ...getCreditUsage(), ...getBudgetStatus(), agentTasksDone, humanTasksDone, providerBreakdown });
 });
 
 // My Work endpoint — cross-project view for the human

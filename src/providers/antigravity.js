@@ -79,7 +79,7 @@ class AntigravityProvider extends BaseProvider {
       let stderr = '';
       let timedOut = false;
 
-      const proc = spawn('agy', ['--headless', prompt], {
+      const proc = spawn('agy', ['chat', '--mode', 'agent', prompt], {
         cwd: project.repo_path,
         timeout,
         env: { ...process.env },
@@ -119,10 +119,19 @@ class AntigravityProvider extends BaseProvider {
   }
 
   _buildPrompt(task, project) {
-    let prompt = task.title;
-    if (task.description) prompt += `\n\n${task.description}`;
-    if (project.context) prompt += `\n\nProject context: ${project.context}`;
-    return prompt;
+    const parts = [task.title];
+    if (task.description) parts.push(task.description);
+    if (project.context) parts.push(`Project context: ${project.context}`);
+
+    // Add project rules if available
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const claudeMd = fs.readFileSync(path.join(project.repo_path, 'CLAUDE.md'), 'utf-8');
+      if (claudeMd) parts.push(`Project rules:\n${claudeMd.slice(0, 2000)}`);
+    } catch {}
+
+    return parts.join('\n\n');
   }
 }
 
