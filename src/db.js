@@ -244,6 +244,14 @@ function migrate() {
     database.exec("ALTER TABLE schedule ADD COLUMN log_retention_days INTEGER DEFAULT 7");
   }
 
+  // Migration: add blocked_slots to schedule
+  try {
+    const schCols3 = database.prepare("PRAGMA table_info(schedule)").all();
+    if (!schCols3.find(c => c.name === 'blocked_slots')) {
+      database.exec("ALTER TABLE schedule ADD COLUMN blocked_slots TEXT DEFAULT '[]'");
+    }
+  } catch {}
+
   // === Product OS tables ===
 
   // Goals: the "why" behind features (e.g., "increase retention by 20%")

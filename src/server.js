@@ -50,6 +50,48 @@ app.get('/api/memory/stats', (req, res) => {
   });
 });
 
+// Schedule activity endpoint — 7x24 grid of agent executions this week
+app.get('/api/schedule/activity', (req, res) => {
+  const db = require('./db').getDb();
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Get all executions from the past week with their start times
+  const executions = db.prepare(`
+    SELECT started_at, actual_cost_usd, status
+    FROM executions WHERE started_at > ? AND started_at IS NOT NULL
+  `).all(weekAgo);
+
+  // Build a 7x24 grid (day x hour) with execution counts
+  const grid = {};
+  for (let day = 0; day < 7; day++) {
+    grid[day] = {};
+    for (let hour = 0; hour < 24; hour++) {
+      grid[day][hour] = { count: 0, cost: 0 };
+    }
+  }
+
+  const schedule = db.prepare('SELECT timezone FROM schedule WHERE id = 1').get();
+  const tz = schedule?.timezone || 'America/Los_Angeles';
+
+  for (const exec of executions) {
+    try {
+      const d = new Date(exec.started_at.includes('T') ? exec.started_at : exec.started_at.replace(' ', 'T') + 'Z');
+      // Get local day and hour in user's timezone
+      const formatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', weekday: 'short', hour12: false });
+      const parts = formatter.formatToParts(d);
+      const hourStr = parts.find(p => p.type === 'hour')?.value;
+      const dayStr = parts.find(p => p.type === 'weekday')?.value;
+      const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      const day = dayMap[dayStr] ?? d.getDay();
+      const hour = parseInt(hourStr) || 0;
+      grid[day][hour].count++;
+      grid[day][hour].cost += exec.actual_cost_usd || 0;
+    } catch {}
+  }
+
+  res.json({ grid, timezone: tz });
+});
+
 // Credit usage endpoint
 app.get('/api/credits', (req, res) => {
   const { getDb } = require('./db');

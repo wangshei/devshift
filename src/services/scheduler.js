@@ -69,7 +69,22 @@ function isOffHours() {
   const startMinutes = startH * 60 + startM;
   const endMinutes = endH * 60 + endM;
 
-  return currentMinutes < startMinutes || currentMinutes >= endMinutes;
+  if (currentMinutes >= startMinutes && currentMinutes < endMinutes) return false;
+
+  // Check blocked time slots
+  try {
+    const blockedRaw = schedule.blocked_slots || '[]';
+    const blocked = JSON.parse(blockedRaw);
+    if (blocked.length > 0) {
+      const currentSlot = blocked.find(s => s.day === localDay && s.hour === localHours);
+      if (currentSlot) {
+        log.debug('Scheduler: blocked time slot');
+        return false; // Not off-hours = agent should NOT work
+      }
+    }
+  } catch {}
+
+  return true;
 }
 
 /**

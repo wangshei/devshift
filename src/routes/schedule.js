@@ -15,7 +15,7 @@ router.patch('/', (req, res) => {
   const db = getDb();
   const fields = ['timezone', 'active_hours_start', 'active_hours_end', 'active_days',
     'vacation_mode', 'vacation_until', 'off_today', 'primary_provider',
-    'max_tasks_per_window', 'reserve_percent', 'telegram_bot_token', 'telegram_chat_id', 'always_on', 'last_checkin'];
+    'max_tasks_per_window', 'reserve_percent', 'telegram_bot_token', 'telegram_chat_id', 'always_on', 'last_checkin', 'blocked_slots'];
   const updates = [];
   const values = [];
 
