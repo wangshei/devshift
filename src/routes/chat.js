@@ -107,8 +107,12 @@ router.post('/send', (req, res) => {
   const proc = spawn('claude', args, {
     cwd,
     env: { ...process.env },
-    timeout: 5 * 60 * 1000, // 5 min timeout for chat
+    timeout: 5 * 60 * 1000,
+    stdio: ['pipe', 'pipe', 'pipe'], // explicit pipe so we can close stdin
   });
+
+  // Close stdin immediately so Claude doesn't wait for input
+  proc.stdin.end();
 
   let fullOutput = '';
   let newSessionId = null;
