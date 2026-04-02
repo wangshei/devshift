@@ -73,13 +73,19 @@ ${ideas.map(i => `- ${i.title}`).join('\n') || 'None'}
 ## Known Issues
 ${pitfalls.map(p => `- ${p.content.slice(0, 100)}`).join('\n') || 'None'}
 
-Write a concise status report (3-5 short paragraphs) with:
-1. **What happened** — key completions and progress
-2. **What needs you** — items requiring human attention and why
-3. **What's next** — what the agent plans to work on
-4. **Suggestion** — one actionable recommendation for the human
+Write a SHORT status update using this exact format:
 
-Keep it conversational and brief — like a standup update from a teammate. No markdown headers, just natural paragraphs. Address the human directly ("you" not "the user").`;
+✅ Done: bullet list of completions (1 line each, no fluff)
+⚠️ Needs you: what requires human action and why (skip if nothing)
+🔜 Next: what agent will work on
+💡 Suggestion: one actionable tip
+
+Rules:
+- Use emojis and bullets, NOT paragraphs
+- Max 8 bullet points total
+- No filler words like "Good progress" or "Here's an update"
+- Each bullet under 15 words
+- Be direct and energetic`;
 
   try {
     // Check if Claude is available

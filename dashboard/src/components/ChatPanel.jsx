@@ -186,8 +186,8 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
           )}
           {taskId && sessionId && (
             <button onClick={handlePushToAgent}
-              className="px-2 py-1 text-[10px] bg-accent text-white rounded hover:bg-accent/80 transition-colors">
-              Push to agent
+              className="px-3 py-1 text-[10px] bg-success text-white rounded-lg hover:bg-success/80 transition-colors font-medium">
+              ✅ Push changes to queue
             </button>
           )}
           {onClose && (
@@ -233,15 +233,15 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
                 </div>
               )}
             </div>
-            {msg.role === 'assistant' && !msg.loading && !msg.error && (
-              <div className="flex gap-1 mt-1">
+            {msg.role === 'assistant' && !msg.loading && !msg.error && chatMode === 'think' && (
+              <div className="flex gap-2 mt-2 pt-1 border-t border-border/30">
                 <button onClick={() => handleCreateTask(msg.content)}
-                  className="text-[9px] text-vmuted hover:text-accent transition-colors">
-                  → Create task
+                  className="text-[10px] text-accent hover:text-text font-medium transition-colors">
+                  🚀 Send to agent
                 </button>
                 <button onClick={() => handleCreateIdea(msg.content)}
-                  className="text-[9px] text-vmuted hover:text-accent transition-colors">
-                  → Save as idea
+                  className="text-[10px] text-vmuted hover:text-muted transition-colors">
+                  💡 Save as idea
                 </button>
               </div>
             )}
@@ -268,6 +268,25 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
         </div>
       )}
 
+      {/* Mode selector — above input, prominent */}
+      <div className="border-b border-border px-4 py-2 flex items-center gap-1 bg-bg/50">
+        {[
+          { id: 'think', label: '💬 Chat', desc: 'Brainstorm · no code access', cost: '~$0.01' },
+          { id: 'plan', label: '📖 Research', desc: 'Can read your code', cost: '~$0.03' },
+          { id: 'agent', label: '🚀 Execute', desc: 'Edits code · runs tests', cost: '~$0.08' },
+        ].map(m => (
+          <button key={m.id} onClick={() => setChatMode(m.id)}
+            className={`flex-1 px-2 py-2 rounded-lg text-center transition-colors ${
+              chatMode === m.id
+                ? 'bg-card border border-border shadow-sm'
+                : 'hover:bg-card/50'
+            }`}>
+            <div className="text-xs font-medium">{m.label}</div>
+            <div className="text-[9px] text-vmuted">{m.desc}</div>
+          </button>
+        ))}
+      </div>
+
       {/* Input */}
       <div className="border-t border-border px-4 py-3 shrink-0 space-y-2">
         <div className="flex gap-2">
@@ -276,7 +295,7 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-            placeholder={sending ? 'Waiting for response...' : chatMode === 'think' ? 'Brainstorm an idea...' : chatMode === 'plan' ? 'Ask about the codebase...' : 'Tell the agent what to build...'}
+            placeholder={sending ? 'Waiting...' : chatMode === 'think' ? 'Ask anything...' : chatMode === 'plan' ? 'Ask about the codebase...' : 'Describe what to build...'}
             disabled={sending}
             className="flex-1 bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text placeholder:text-vmuted focus:outline-none focus:border-accent disabled:opacity-50"
           />
@@ -284,25 +303,6 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
             className="px-4 py-2 bg-accent text-white text-sm rounded-lg hover:bg-accent/80 disabled:opacity-40 transition-colors">
             Send
           </button>
-        </div>
-        {/* Mode selector */}
-        <div className="flex items-center gap-1">
-          {[
-            { id: 'think', label: 'Think', desc: 'Brainstorm (cheapest)', color: 'text-success' },
-            { id: 'plan', label: 'Plan', desc: 'Can read files', color: 'text-accent' },
-            { id: 'agent', label: 'Agent', desc: 'Can edit & run', color: 'text-warning' },
-          ].map(m => (
-            <button key={m.id} onClick={() => setChatMode(m.id)}
-              className={`px-2 py-1 text-[10px] rounded transition-colors ${
-                chatMode === m.id ? `${m.color} bg-bg border border-border font-medium` : 'text-vmuted hover:text-muted'
-              }`}
-              title={m.desc}>
-              {m.label}
-            </button>
-          ))}
-          <span className="text-[9px] text-vmuted ml-auto">
-            {chatMode === 'think' ? '~$0.01/msg' : chatMode === 'plan' ? '~$0.03/msg' : '~$0.08/msg'}
-          </span>
         </div>
       </div>
     </div>

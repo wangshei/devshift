@@ -882,12 +882,19 @@ export default function ProjectFeed() {
               </h1>
             )}
             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-              {project.stack?.length > 0 && project.stack.map(s => (
+              {project.stack?.length > 0 && (typeof project.stack === 'string' ? JSON.parse(project.stack) : project.stack).map(s => (
                 <span key={s} className="text-[10px] px-1.5 py-0.5 bg-accent/10 text-accent rounded font-mono">{s}</span>
               ))}
               {project.repo_path && (
                 <span className="text-[10px] font-mono text-vmuted truncate max-w-xs">{project.repo_path}</span>
               )}
+            </div>
+            {/* Quick stats line */}
+            <div className="flex gap-3 mt-1 text-[10px] font-mono text-vmuted">
+              {goalList.length > 0 && <span>{goalList.length} goal{goalList.length !== 1 ? 's' : ''}</span>}
+              {featureList.length > 0 && <span>{featureList.length} feature{featureList.length !== 1 ? 's' : ''}</span>}
+              <span>{allTasks.filter(t => t.status === 'done').length} done</span>
+              <span>{allTasks.filter(t => ['queued', 'backlog'].includes(t.status)).length} queued</span>
             </div>
           </div>
           <button
@@ -978,11 +985,26 @@ export default function ProjectFeed() {
         {/* Section 6: Ideas */}
         <IdeasSection projectId={id} onPromoted={refetch} />
 
-        {/* Empty state (no features and no tasks) */}
-        {!hasFeatures && allTasks.length === 0 && attentionItems.length === 0 && (
-          <div className="text-center py-12">
-            <p className="text-muted text-sm mb-1">No tasks for {project.name} yet.</p>
-            <p className="text-vmuted text-xs">Add a task below to get started.</p>
+        {/* Empty project — show onboarding */}
+        {featureList.length === 0 && allTasks.length === 0 && (
+          <div className="bg-card border border-border rounded-lg p-6 space-y-4">
+            <h3 className="text-sm font-medium text-text">Get started with {project.name}</h3>
+            <div className="space-y-2 text-xs text-muted">
+              <p>Here's how to use DevShift with this project:</p>
+              <div className="space-y-1.5 pl-2">
+                <p>💬 <strong>Chat</strong> — brainstorm ideas with Claude (cheap, no code changes)</p>
+                <p>🚀 <strong>Execute</strong> — send tasks to the coding agent (edits files, runs tests)</p>
+                <p>📋 <strong>Add task below</strong> — describe what you want built in plain English</p>
+              </div>
+              <p className="text-vmuted mt-3">The agent will read your project's code, CLAUDE.md, and memories before working.</p>
+            </div>
+            {project.context ? (
+              <div className="text-[10px] text-vmuted font-mono bg-bg rounded p-2 max-h-20 overflow-hidden">
+                {project.context.slice(0, 200)}...
+              </div>
+            ) : (
+              <p className="text-[10px] text-warning">⚠ No CLAUDE.md or README found. Add one for better results.</p>
+            )}
           </div>
         )}
       </div>
