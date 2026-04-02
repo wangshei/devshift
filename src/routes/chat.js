@@ -106,13 +106,17 @@ router.post('/send', (req, res) => {
 
   const proc = spawn('claude', args, {
     cwd,
-    env: { ...process.env },
-    timeout: 5 * 60 * 1000,
-    stdio: ['pipe', 'pipe', 'pipe'], // explicit pipe so we can close stdin
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe'], // ignore stdin — Claude doesn't need it for -p mode
   });
 
-  // Close stdin immediately so Claude doesn't wait for input
-  proc.stdin.end();
+  log.info(`[Chat] Spawned claude PID=${proc.pid} args=[${args.slice(0,3).join(',')},...] cwd=${cwd} mode=${chatMode}`);
+
+  // Manual timeout
+  const killTimer = setTimeout(() => {
+    log.warn('[Chat] Timeout — killing process');
+    proc.kill('SIGTERM');
+  }, 5 * 60 * 1000);
 
   let fullOutput = '';
   let newSessionId = null;
@@ -168,6 +172,8 @@ router.post('/send', (req, res) => {
   });
 
   proc.on('close', (code) => {
+    clearTimeout(killTimer);
+    log.info(`[Chat] Process closed code=${code} output=${fullOutput.length}bytes session=${newSessionId?.slice(0,8) || 'none'}`);
     // Save session_id to task if we have one
     if (newSessionId && taskId) {
       try {
@@ -180,13 +186,15 @@ router.post('/send', (req, res) => {
   });
 
   proc.on('error', (err) => {
+    log.error(`[Chat] Spawn error: ${err.message}`);
     res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
     res.end();
   });
 
-  // Handle client disconnect
-  req.on('close', () => {
-    if (!proc.killed) {
+  // Handle client disconnect — only kill if response hasn't ended yet
+  res.on('close', () => {
+    if (!proc.killed && !res.writableEnded) {
+      log.debug('[Chat] Client disconnected — killing process');
       proc.kill('SIGTERM');
     }
   });
