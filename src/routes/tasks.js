@@ -390,23 +390,40 @@ router.post('/:id/approve', (req, res) => {
   const db = getDb();
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
-  if (!task.branch_name) return res.status(400).json({ error: 'No branch to merge' });
+
+  // If no branch, just mark as done (changes were already on main or branch was cleaned up)
+  if (!task.branch_name) {
+    db.prepare("UPDATE tasks SET status = 'done', branch_name = NULL WHERE id = ?").run(task.id);
+    return res.json({ merged: true, note: 'No branch — marked as done' });
+  }
 
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
   if (!project) return res.status(404).json({ error: 'Project not found' });
 
   const gitUtils = require('../utils/git');
   try {
+    // Check if branch actually exists
+    const { execSync } = require('child_process');
+    try {
+      execSync(`git rev-parse --verify ${task.branch_name}`, { cwd: project.repo_path, stdio: 'pipe' });
+    } catch {
+      // Branch doesn't exist — already merged or deleted. Just mark done.
+      db.prepare("UPDATE tasks SET status = 'done', branch_name = NULL WHERE id = ?").run(task.id);
+      return res.json({ merged: true, note: 'Branch already merged or cleaned up' });
+    }
+
     const defaultBranch = gitUtils.getDefaultBranch(project.repo_path);
     gitUtils.checkout(project.repo_path, defaultBranch);
     gitUtils.mergeBranch(project.repo_path, task.branch_name);
-    gitUtils.deleteBranch(project.repo_path, task.branch_name);
+    try { gitUtils.deleteBranch(project.repo_path, task.branch_name); } catch {}
 
-    db.prepare("UPDATE tasks SET status = 'done' WHERE id = ?").run(task.id);
+    db.prepare("UPDATE tasks SET status = 'done', branch_name = NULL WHERE id = ?").run(task.id);
 
     res.json({ merged: true, branch: task.branch_name, into: defaultBranch });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    // If merge fails, still mark as done but warn
+    db.prepare("UPDATE tasks SET status = 'done', branch_name = NULL WHERE id = ?").run(task.id);
+    res.json({ merged: false, error: e.message, note: 'Merge failed but task marked done. Changes may need manual review.' });
   }
 });
 

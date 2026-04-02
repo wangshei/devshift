@@ -178,7 +178,7 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
               credits.available < 0.5 ? 'text-error animate-pulse' :
               credits.available < 1.5 ? 'text-warning' : 'text-vmuted'
             }`}>
-              {credits.available <= 0 ? 'No credits' : `$${credits.available?.toFixed(2) || '?'} left`}
+              {credits.available <= 0 ? 'Weekly budget used up' : `$${credits.available?.toFixed(2)} weekly budget left`}
             </span>
           )}
           {totalCost > 0 && (

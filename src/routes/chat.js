@@ -79,8 +79,7 @@ router.post('/send', (req, res) => {
   } else if (chatMode === 'plan') {
     args.push('--allowedTools', 'Read,Glob,Grep');
   } else {
-    // 'think' mode — no tools, just conversation. Cheapest.
-    args.push('--tools', '');
+    // 'think' mode — just conversation. Cheapest.
     args.push('--effort', 'low');
   }
 
@@ -114,13 +113,18 @@ router.post('/send', (req, res) => {
   let fullOutput = '';
   let newSessionId = null;
   let cost = null;
+  let lineBuffer = ''; // Handle JSON lines split across chunks
 
   proc.stdout.on('data', (chunk) => {
     const text = chunk.toString();
     fullOutput += text;
+    lineBuffer += text;
 
-    // Parse each line as JSON and forward relevant events
-    for (const line of text.split('\n')) {
+    // Split by newlines, keeping incomplete last line in buffer
+    const lines = lineBuffer.split('\n');
+    lineBuffer = lines.pop() || ''; // Last element might be incomplete
+
+    for (const line of lines) {
       if (!line.trim()) continue;
       try {
         const event = JSON.parse(line);
@@ -129,7 +133,7 @@ router.post('/send', (req, res) => {
         if (event.session_id) newSessionId = event.session_id;
 
         if (event.type === 'assistant') {
-          // Stream assistant text content
+          // Stream assistant text content (full text, frontend replaces)
           const textContent = event.message?.content?.find(c => c.type === 'text');
           if (textContent?.text) {
             res.write(`data: ${JSON.stringify({ type: 'text', content: textContent.text })}\n\n`);
@@ -141,13 +145,12 @@ router.post('/send', (req, res) => {
             res.write(`data: ${JSON.stringify({ type: 'tool_use', tool: toolUse.name, input: JSON.stringify(toolUse.input).slice(0, 200) })}\n\n`);
           }
         } else if (event.type === 'result') {
-          // Final result
           newSessionId = event.session_id;
           cost = event.total_cost_usd;
           res.write(`data: ${JSON.stringify({ type: 'done', sessionId: event.session_id, cost: event.total_cost_usd, result: event.result })}\n\n`);
         }
       } catch {
-        // Not valid JSON line, skip
+        // Not valid JSON line — might be partial, will be completed in next chunk
       }
     }
   });

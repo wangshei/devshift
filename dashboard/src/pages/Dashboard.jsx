@@ -59,8 +59,10 @@ export default function Dashboard() {
               {isAlwaysOn ? 'Auto-pilot on' : 'Auto-pilot off'}
             </span>
           </button>
-          {credits?.realCostUsd > 0 && (
-            <span className="text-xs font-mono text-vmuted">${credits.realCostUsd.toFixed(2)} this week</span>
+          {credits && (
+            <span className="text-xs font-mono text-vmuted">
+              ${credits.realCostUsd?.toFixed(2) || '0.00'} spent · ${credits.available?.toFixed(2) || '?'} left this week
+            </span>
           )}
           {totalQueued > 0 && (
             <span className="text-xs font-mono text-vmuted">{totalQueued} queued</span>
