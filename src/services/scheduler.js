@@ -226,37 +226,17 @@ async function tick() {
       task = pickNextTask();
     }
 
-    // --- SMART MODE: if no backlog tasks and credits available, be proactive ---
+    // --- SMART MODE: only if plenty of budget (>30%) and no tasks running ---
     if (!task) {
+      const inProgressCount = getDb().prepare("SELECT COUNT(*) as c FROM tasks WHERE status = 'in_progress'").get().c;
       const credits = getCreditUsage();
-      if (credits.availablePercent > 10) {
+      if (inProgressCount === 0 && credits.availablePercent > 30) {
         await runSmartModeForAllProjects();
       }
     }
 
-    // --- MEMORY CONSOLIDATION: periodically synthesize learnings ---
-    if (!task) {
-      try {
-        const { consolidateMemories } = require('./memory');
-        const db = getDb();
-        const projects = db.prepare("SELECT * FROM projects WHERE paused = 0").all();
-        // Consolidate one project per tick, round-robin
-        const tickCount = Date.now(); // rough counter
-        const idx = Math.floor(tickCount / 60000) % Math.max(projects.length, 1);
-        if (projects[idx]) {
-          // Only consolidate every ~6 hours (360 ticks)
-          const lastConsolidation = db.prepare(
-            "SELECT MAX(updated_at) as last FROM project_memory WHERE project_id = ? AND category = 'patterns'"
-          ).get(projects[idx].id);
-          const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-          if (!lastConsolidation?.last || lastConsolidation.last < sixHoursAgo) {
-            await consolidateMemories(projects[idx].id);
-          }
-        }
-      } catch (e) {
-        log.debug(`[Memory] Consolidation tick failed: ${e.message}`);
-      }
-    }
+    // --- MEMORY CONSOLIDATION: only once per day, not per tick ---
+    // (Was running every minute and burning credits. Now runs once at 4am via cleanup cron.)
     // --- GIT WATCH: detect human commits to keep project memory up to date ---
     try {
       const { detectHumanCommits } = require('./git-watch');
@@ -265,13 +245,8 @@ async function tick() {
       log.debug(`[GitWatch] ${e.message}`);
     }
 
-    // --- PM REPORTS: periodic status updates ---
-    try {
-      const { generateAllReports } = require('./pm-report');
-      await generateAllReports();
-    } catch (e) {
-      log.debug(`[PMReport] ${e.message}`);
-    }
+    // --- PM REPORTS: only when there's actual work to report (not every tick) ---
+    // Reports generate via the daily cleanup cron or when user requests
   } catch (e) {
     log.error(`Scheduler error: ${e.message}`);
   } finally {
