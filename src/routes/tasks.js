@@ -325,6 +325,18 @@ router.post('/:id/execute', async (req, res) => {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
+  // Check previous attempts
+  const attempts = db.prepare('SELECT COUNT(*) as c FROM executions WHERE task_id = ?').get(req.params.id);
+  const lastExec = db.prepare('SELECT * FROM executions WHERE task_id = ? ORDER BY started_at DESC LIMIT 1').get(req.params.id);
+
+  if (attempts.c >= 3) {
+    return res.status(400).json({
+      error: `This task has failed ${attempts.c} times. Last error: ${lastExec?.error || 'unknown'}. Consider editing the task description or working on it manually.`,
+      attempts: attempts.c,
+      lastError: lastExec?.error
+    });
+  }
+
   try {
     const { executeTask } = require('../services/executor');
     const result = await executeTask(req.params.id);

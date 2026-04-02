@@ -159,6 +159,11 @@ function migrate() {
     database.exec("ALTER TABLE projects ADD COLUMN auto_approve_tiers TEXT DEFAULT '1'");
   }
 
+  // Migration: add stack column to projects for tech stack detection
+  if (!projectCols.find(c => c.name === 'stack')) {
+    database.exec("ALTER TABLE projects ADD COLUMN stack TEXT");
+  }
+
   // Migration: add session_id column to tasks if missing
   const taskCols = database.prepare("PRAGMA table_info(tasks)").all();
   if (!taskCols.find(c => c.name === 'session_id')) {

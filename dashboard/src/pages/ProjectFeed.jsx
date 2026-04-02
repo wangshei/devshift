@@ -126,6 +126,17 @@ function cleanSummary(text) {
   return s.slice(0, 300);
 }
 
+function humanizeError(error) {
+  if (!error) return 'Unknown error';
+  if (error.includes('rate_limited')) return 'Rate limited — will auto-retry when credits reset';
+  if (error.includes('crashed') || error.includes('auto-recovered')) return 'Agent crashed mid-task — can retry safely';
+  if (error.includes('ETIMEDOUT') || error.includes('timed out')) return 'Timed out — task may be too complex, try breaking it down';
+  if (error.includes('stdin')) return 'Environment issue — try running manually via Chat';
+  if (error.includes('No available provider')) return 'No AI provider available — check Settings';
+  if (error.includes('Repo is busy')) return 'Another task was running on this repo — will retry automatically';
+  return error.slice(0, 150);
+}
+
 function featureSummaryText(feature, tasks) {
   const total = tasks.length;
   const done = tasks.filter(t => t.status === 'done').length;
@@ -212,6 +223,7 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
   const [showDiff, setShowDiff] = useState(false);
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [reviewTask, setReviewTask] = useState(null);
+  const [deletingFeature, setDeletingFeature] = useState(false);
 
   const total = tasks.length;
   const done = tasks.filter(t => t.status === 'done').length;
@@ -258,6 +270,16 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
       onAction?.();
     } catch { /* ignore */ }
     finally { setActingTask(null); }
+  };
+
+  const handleDeleteFeature = async () => {
+    if (!confirm(`Delete feature "${feature.title}" and its task links?`)) return;
+    setDeletingFeature(true);
+    try {
+      await api(`/product/features/${feature.id}`, { method: 'DELETE' });
+      onAction?.();
+    } catch { /* ignore */ }
+    finally { setDeletingFeature(false); }
   };
 
   return (
@@ -346,6 +368,11 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
                       {isWorking && (
                         <span className="text-[10px] font-mono text-accent animate-pulse">working...</span>
                       )}
+                      {t.status === 'failed' && t.execution_log && (
+                        <span className="text-[10px] text-error/80 truncate max-w-[200px]" title={t.execution_log}>
+                          {humanizeError(t.execution_log)}
+                        </span>
+                      )}
                       {t.actual_minutes && (
                         <span className="text-[10px] font-mono text-vmuted">{t.actual_minutes}m</span>
                       )}
@@ -418,17 +445,26 @@ function FeatureCard({ feature, tasks, onAction, onChat }) {
             <CommentThread taskId={feature.id} />
           </div>
 
-          {/* Chat about this feature */}
-          {onChat && (
-            <div className="px-4 pb-3">
+          {/* Chat about this feature + delete */}
+          <div className="px-4 pb-3 flex items-center gap-2">
+            {onChat && (
               <button
                 onClick={() => onChat({ id: feature.id, title: feature.title })}
                 className="px-3 py-1.5 text-xs bg-accent/10 text-accent border border-accent/20 rounded-md hover:bg-accent/20 transition-colors"
               >
                 Chat about this
               </button>
-            </div>
-          )}
+            )}
+            {feature.id !== '__other__' && (
+              <button
+                onClick={handleDeleteFeature}
+                disabled={deletingFeature}
+                className="px-3 py-1.5 text-xs text-error/60 hover:text-error border border-error/20 rounded-md hover:bg-error/10 transition-colors disabled:opacity-40 ml-auto"
+              >
+                {deletingFeature ? 'Deleting...' : 'Delete feature'}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

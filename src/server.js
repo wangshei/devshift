@@ -169,6 +169,36 @@ try {
   for (const p of projects) seedAgentsForProject(p.id);
 } catch {}
 
+// Auto-populate blank project contexts
+try {
+  const fs = require('fs');
+  const ppath = require('path');
+  const db = require('./db').getDb();
+  const blankProjects = db.prepare("SELECT * FROM projects WHERE context IS NULL OR context = ''").all();
+  for (const p of blankProjects) {
+    let context = '';
+    try { context = fs.readFileSync(ppath.join(p.repo_path, 'CLAUDE.md'), 'utf-8').slice(0, 2000); }
+    catch { try { context = fs.readFileSync(ppath.join(p.repo_path, 'README.md'), 'utf-8').slice(0, 1000); } catch {} }
+
+    let stack = [];
+    try {
+      const pkg = JSON.parse(fs.readFileSync(ppath.join(p.repo_path, 'package.json'), 'utf-8'));
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      if (deps.react) stack.push('React');
+      if (deps.next) stack.push('Next.js');
+      if (deps.express) stack.push('Express');
+      if (deps.tailwindcss) stack.push('Tailwind');
+      if (deps.typescript) stack.push('TypeScript');
+    } catch {}
+
+    if (context || stack.length) {
+      db.prepare('UPDATE projects SET context = COALESCE(NULLIF(context, \'\'), ?), stack = COALESCE(NULLIF(stack, \'[]\'), ?) WHERE id = ?')
+        .run(context, JSON.stringify(stack), p.id);
+    }
+  }
+  if (blankProjects.length > 0) log.info(`Auto-populated context for ${blankProjects.length} projects`);
+} catch {}
+
 // Auto-detect providers on startup
 const { detectProviders } = require('./providers');
 detectProviders();

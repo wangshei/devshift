@@ -174,7 +174,75 @@ router.post('/from-path', (req, res) => {
     seedAgentsForProject(id);
   } catch {}
 
-  res.status(201).json(project);
+  // Auto-detect project context
+  try {
+    const repoPath = cleanPath;
+    let stack = [];
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(repoPath, 'package.json'), 'utf-8'));
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      if (deps.react) stack.push('React');
+      if (deps.next) stack.push('Next.js');
+      if (deps.vue) stack.push('Vue');
+      if (deps.express) stack.push('Express');
+      if (deps.fastify) stack.push('Fastify');
+      if (deps.tailwindcss) stack.push('Tailwind');
+      if (deps.typescript) stack.push('TypeScript');
+      if (deps['better-sqlite3'] || deps.sqlite3) stack.push('SQLite');
+      if (deps.prisma || deps['@prisma/client']) stack.push('Prisma');
+      if (deps.mongoose) stack.push('MongoDB');
+    } catch {}
+
+    let detectedContext = context || '';
+    try {
+      detectedContext = fs.readFileSync(path.join(repoPath, 'CLAUDE.md'), 'utf-8').slice(0, 2000);
+    } catch {
+      try {
+        if (!detectedContext) detectedContext = fs.readFileSync(path.join(repoPath, 'README.md'), 'utf-8').slice(0, 1000);
+      } catch {}
+    }
+
+    if (stack.length > 0 || detectedContext) {
+      db.prepare('UPDATE projects SET stack = ?, context = ? WHERE id = ?')
+        .run(JSON.stringify(stack), detectedContext || null, id);
+    }
+  } catch {}
+
+  res.status(201).json(db.prepare('SELECT * FROM projects WHERE id = ?').get(id));
+});
+
+// PATCH /api/projects/:id/refresh-context — re-detect stack and context from disk
+router.post('/:id/refresh-context', (req, res) => {
+  const db = getDb();
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const repoPath = project.repo_path;
+  let stack = [];
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(repoPath, 'package.json'), 'utf-8'));
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    if (deps.react) stack.push('React');
+    if (deps.next) stack.push('Next.js');
+    if (deps.vue) stack.push('Vue');
+    if (deps.express) stack.push('Express');
+    if (deps.fastify) stack.push('Fastify');
+    if (deps.tailwindcss) stack.push('Tailwind');
+    if (deps.typescript) stack.push('TypeScript');
+    if (deps['better-sqlite3'] || deps.sqlite3) stack.push('SQLite');
+    if (deps.prisma || deps['@prisma/client']) stack.push('Prisma');
+    if (deps.mongoose) stack.push('MongoDB');
+  } catch {}
+
+  let context = '';
+  try { context = fs.readFileSync(path.join(repoPath, 'CLAUDE.md'), 'utf-8').slice(0, 2000); }
+  catch { try { context = fs.readFileSync(path.join(repoPath, 'README.md'), 'utf-8').slice(0, 1000); } catch {} }
+
+  db.prepare("UPDATE projects SET stack = ?, context = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(JSON.stringify(stack), context || null, req.params.id);
+
+  const updated = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+  res.json(updated);
 });
 
 // POST /api/projects/create-new — create a new project directory and register it

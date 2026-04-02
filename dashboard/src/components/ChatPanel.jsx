@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { api, useApi } from '../hooks/useApi';
+import Markdown from './Markdown';
 
 export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPushed }) {
   const [messages, setMessages] = useState([]);
@@ -44,7 +45,7 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
       const response = await fetch('/api/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId, message: text, mode: chatMode, model: chatMode === 'think' ? 'sonnet' : undefined }),
+        body: JSON.stringify({ taskId, projectId, message: text, mode: chatMode, model: chatMode === 'think' ? 'sonnet' : undefined }),
       });
 
       const reader = response.body.getReader();
@@ -218,7 +219,9 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
                 <span className="text-xs text-muted animate-pulse">Thinking...</span>
               )}
               {msg.content && (
-                <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                msg.role === 'assistant'
+                  ? <Markdown text={msg.content} className="text-xs leading-relaxed" />
+                  : <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.content}</p>
               )}
               {msg.tools?.length > 0 && (
                 <div className="mt-1.5 space-y-0.5">

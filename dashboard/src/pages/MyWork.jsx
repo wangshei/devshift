@@ -3,6 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { useApi, api } from '../hooks/useApi';
 import ChatPanel from '../components/ChatPanel';
 
+function humanizeError(error) {
+  if (!error) return 'Unknown error';
+  if (error.includes('rate_limited')) return 'Rate limited — will auto-retry when credits reset';
+  if (error.includes('crashed') || error.includes('auto-recovered')) return 'Agent crashed mid-task — can retry safely';
+  if (error.includes('ETIMEDOUT') || error.includes('timed out')) return 'Timed out — task may be too complex, try breaking it down';
+  if (error.includes('stdin')) return 'Environment issue — try running manually via Chat';
+  if (error.includes('No available provider')) return 'No AI provider available — check Settings';
+  if (error.includes('Repo is busy')) return 'Another task was running on this repo — will retry automatically';
+  return error.slice(0, 150);
+}
+
 export default function MyWork() {
   const navigate = useNavigate();
   const { data, refetch } = useApi('/my-work', [], 5000);
@@ -193,6 +204,7 @@ function ReviewCard({ task, onAction, onChat, navigate }) {
   const summary = task.result_summary
     ? task.result_summary.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim().slice(0, 120)
     : null;
+  const failedError = kind === 'failed' && task.execution_log ? humanizeError(task.execution_log) : null;
 
   const handleViewChanges = async () => {
     if (kind === 'plan') {
@@ -251,9 +263,11 @@ function ReviewCard({ task, onAction, onChat, navigate }) {
 
   // Try to show a clean feature-level name
   const displayName = task.feature_name || task.title;
-  const changeSummary = summary && !summary.startsWith('[') && !summary.startsWith('{')
-    ? summary
-    : task.review_instructions?.slice(0, 120) || null;
+  const changeSummary = failedError
+    ? failedError
+    : summary && !summary.startsWith('[') && !summary.startsWith('{')
+      ? summary
+      : task.review_instructions?.slice(0, 120) || null;
 
   return (
     <div className={`bg-card border ${borderColor} rounded-lg px-4 py-3`}>

@@ -20,7 +20,7 @@ const activeSessions = new Map();
  */
 router.post('/send', (req, res) => {
   const db = getDb();
-  const { taskId, message, model, mode } = req.body;
+  const { taskId, message, model, mode, projectId: bodyProjectId } = req.body;
 
   if (!message?.trim()) {
     return res.status(400).json({ error: 'Message required' });
@@ -36,6 +36,11 @@ router.post('/send', (req, res) => {
       project = db.prepare('SELECT * FROM projects WHERE id = ?').get(task.project_id);
       sessionId = task.session_id;
     }
+  }
+
+  // If no task but projectId provided, load project directly
+  if (!project && bodyProjectId) {
+    project = db.prepare('SELECT * FROM projects WHERE id = ?').get(bodyProjectId);
   }
 
   let enrichedMessage = message.trim();
