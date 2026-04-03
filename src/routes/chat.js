@@ -123,14 +123,17 @@ router.post('/send', (req, res) => {
   // 'agent' = full coding agent, can edit/run (~$0.05-0.15/msg)
   const chatMode = mode || 'think';
 
+  // Mode determines permissions — but ALL modes get full Claude Code quality
+  // (same system prompt, same CLAUDE.md, same context management)
   if (chatMode === 'agent') {
+    // Full terminal-equivalent: can read, edit, run bash, everything
     args.push('--permission-mode', 'bypassPermissions');
   } else if (chatMode === 'plan') {
-    args.push('--allowedTools', 'Read,Glob,Grep');
-  } else {
-    // 'think' mode — just conversation. Cheapest.
-    args.push('--effort', 'low');
+    // Can read code but not modify — good for research/analysis
+    args.push('--allowedTools', 'Read,Glob,Grep,Bash(git:*)');
   }
+  // Think mode: default permissions (Claude can still think well, just can't auto-edit)
+  // NO --effort low, NO --bare — those degrade response quality
 
   const selectedModel = model || (chatMode === 'think' ? 'sonnet' : 'sonnet');
   if (selectedModel === 'opus') {

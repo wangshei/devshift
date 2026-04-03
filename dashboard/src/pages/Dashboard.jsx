@@ -61,28 +61,16 @@ export default function Dashboard() {
           </button>
           {credits && (
             <span className="text-xs font-mono text-vmuted">
-              ${credits.realCostUsd?.toFixed(2) || '0.00'} spent · ${credits.available?.toFixed(2) || '?'} left this week
+              ${credits.weeklySpend?.toFixed(2) || '0.00'} this week · {credits.weeklyTasks || 0} tasks
+              {credits.todaySpend > 0 ? ` · $${credits.todaySpend.toFixed(2)} today` : ''}
             </span>
           )}
           {totalQueued > 0 && (
             <span className="text-xs font-mono text-vmuted">{totalQueued} queued</span>
           )}
-          {credits?.status === 'critical' && (
-            <span className="text-[10px] text-error font-mono animate-pulse">{credits.message}</span>
-          )}
-          {credits?.status === 'low' && (
-            <span className="text-[10px] text-warning font-mono">{credits.message}</span>
-          )}
-          {credits?.status === 'exhausted' && (
-            <span className="text-[10px] text-error font-bold">Budget exhausted — agent paused</span>
-          )}
-          {credits?.providerBreakdown?.some(p => p.rateLimitedUntil && new Date(p.rateLimitedUntil) > new Date()) && (
-            <span className="text-[10px] text-warning font-mono">
-              Rate limited — resets {(() => {
-                const rl = credits.providerBreakdown.find(p => p.rateLimitedUntil && new Date(p.rateLimitedUntil) > new Date());
-                const mins = Math.max(1, Math.round((new Date(rl.rateLimitedUntil) - new Date()) / 60000));
-                return mins < 60 ? `in ${mins}min` : `at ${new Date(rl.rateLimitedUntil).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
-              })()}
+          {credits?.isRateLimited && (
+            <span className="text-[10px] text-warning font-mono animate-pulse">
+              {credits.message || 'Rate limited'}
             </span>
           )}
         </div>

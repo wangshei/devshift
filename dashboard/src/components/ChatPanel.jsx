@@ -193,13 +193,14 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {credits && (
-            <span className={`text-[9px] font-mono ${
-              credits.available <= 0 ? 'text-error' :
-              credits.available < 0.5 ? 'text-error animate-pulse' :
-              credits.available < 1.5 ? 'text-warning' : 'text-vmuted'
-            }`}>
-              {credits.available <= 0 ? 'Weekly budget used up' : `$${credits.available?.toFixed(2)} weekly budget left`}
+          {credits?.isRateLimited && (
+            <span className="text-[9px] font-mono text-warning animate-pulse">
+              Rate limited
+            </span>
+          )}
+          {credits && !credits.isRateLimited && (
+            <span className="text-[9px] font-mono text-vmuted">
+              ${credits.weeklySpend?.toFixed(2) || '0'} this week
             </span>
           )}
           {totalCost > 0 && (

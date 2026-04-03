@@ -3,9 +3,6 @@ const log = require('../utils/logger');
 
 /**
  * Estimate the USD cost of running a task based on tier and model.
- * Sonnet: ~$0.03-0.06 per task. Opus: ~$0.10-0.20.
- * @param {{ tier?: number, model?: string }} task
- * @returns {number} Estimated cost in USD
  */
 function estimateTaskCostUsd(task) {
   const isOpus = (task.model || '').includes('opus');
@@ -16,61 +13,84 @@ function estimateTaskCostUsd(task) {
 }
 
 /**
- * Get credit/cost usage stats for the current week.
+ * Get real usage stats — no fake budgets.
  */
 function getCreditUsage() {
   const db = getDb();
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const todayStart = new Date().toISOString().split('T')[0];
 
-  // Real USD costs from execution records
-  const costs = db.prepare(`
-    SELECT COALESCE(SUM(actual_cost_usd), 0) as total_usd,
-           COUNT(*) as count
+  // This week's costs
+  const weekly = db.prepare(`
+    SELECT COALESCE(SUM(actual_cost_usd), 0) as cost, COUNT(*) as count
     FROM executions WHERE started_at > ? AND status = 'completed'
   `).get(weekAgo);
 
-  // Budget from schedule
-  const schedule = db.prepare('SELECT * FROM schedule WHERE id = 1').get();
-  const reservePercent = schedule?.reserve_percent || 40;
+  // Today's costs
+  const today = db.prepare(`
+    SELECT COALESCE(SUM(actual_cost_usd), 0) as cost, COUNT(*) as count
+    FROM executions WHERE started_at > ? AND status = 'completed'
+  `).get(todayStart);
 
-  // Estimate weekly budget based on plan ($5 default, overridable)
-  const weeklyBudgetUsd = 5.00;
-  const reserved = weeklyBudgetUsd * (reservePercent / 100);
-  const available = Math.max(0, weeklyBudgetUsd - costs.total_usd - reserved);
+  // Check rate limit status from providers
+  const now = new Date().toISOString();
+  const rateLimited = db.prepare(`
+    SELECT id, name, rate_limited_until FROM providers
+    WHERE enabled = 1 AND rate_limited_until IS NOT NULL AND rate_limited_until > ?
+  `).all(now);
+
+  const isRateLimited = rateLimited.length > 0;
+  const resetsAt = rateLimited[0]?.rate_limited_until;
 
   return {
-    budget: weeklyBudgetUsd,
-    realCostUsd: costs.total_usd,
-    executionCount: costs.count,
-    reserved,
-    available,
-    usedPercent: Math.round((costs.total_usd / weeklyBudgetUsd) * 100),
-    reservedPercent: reservePercent,
-    availablePercent: Math.round((available / weeklyBudgetUsd) * 100),
+    weeklySpend: weekly.cost,
+    weeklyTasks: weekly.count,
+    todaySpend: today.cost,
+    todayTasks: today.count,
+    isRateLimited,
+    resetsAt,
+    rateLimitedProviders: rateLimited.map(p => p.name),
   };
 }
 
 /**
- * Check if we can afford to run a task based on real USD spend.
+ * Check if we can run a task — based on rate limits, not fake budgets.
  */
 function canAffordTask(task) {
-  const cost = estimateTaskCostUsd(task);
-  const usage = getCreditUsage();
-  return usage.available >= cost;
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  // Check if any provider is available (not rate limited)
+  const available = db.prepare(`
+    SELECT COUNT(*) as c FROM providers
+    WHERE enabled = 1 AND (rate_limited_until IS NULL OR rate_limited_until < ?)
+  `).get(now);
+
+  return available.c > 0;
 }
 
 /**
- * Get the max tasks for the current window based on schedule config.
+ * Budget status — based on rate limits, not dollar amounts.
  */
+function getBudgetStatus() {
+  const usage = getCreditUsage();
+  if (usage.isRateLimited) {
+    const resetsIn = usage.resetsAt ? Math.max(1, Math.round((new Date(usage.resetsAt) - Date.now()) / 60000)) : '?';
+    return {
+      status: 'rate_limited',
+      message: `Rate limited — resets in ${resetsIn}min`,
+      canRun: false,
+    };
+  }
+  return { status: 'ok', message: 'Ready', canRun: true };
+}
+
 function getMaxTasksForWindow() {
   const db = getDb();
   const schedule = db.prepare('SELECT * FROM schedule WHERE id = 1').get();
-  return schedule?.max_tasks_per_window || 6;
+  return schedule?.max_tasks_per_window || 30;
 }
 
-/**
- * Count tasks executed in the current off-hours window.
- */
 function getTasksExecutedThisWindow() {
   const db = getDb();
   const today = new Date().toISOString().split('T')[0];
@@ -81,22 +101,7 @@ function getTasksExecutedThisWindow() {
   return result.count;
 }
 
-/**
- * Check if we're approaching the weekly budget limit.
- * Returns a status object that callers can use to warn or pause the agent.
- * @returns {{ status: 'ok'|'low'|'critical'|'exhausted', message: string, canRun: boolean }}
- */
-function getBudgetStatus() {
-  const usage = getCreditUsage();
-  const remainingUsd = usage.available;
-
-  if (remainingUsd <= 0) return { status: 'exhausted', message: 'Budget exhausted. Agent paused.', canRun: false };
-  if (remainingUsd < 0.10) return { status: 'critical', message: `Only $${remainingUsd.toFixed(2)} remaining. Agent will pause soon.`, canRun: true };
-  if (remainingUsd < 0.50) return { status: 'low', message: `$${remainingUsd.toFixed(2)} remaining this week.`, canRun: true };
-  return { status: 'ok', message: `$${remainingUsd.toFixed(2)} remaining.`, canRun: true };
-}
-
 module.exports = {
   estimateTaskCostUsd, getCreditUsage, canAffordTask,
-  getMaxTasksForWindow, getTasksExecutedThisWindow, getBudgetStatus,
+  getBudgetStatus, getMaxTasksForWindow, getTasksExecutedThisWindow,
 };
