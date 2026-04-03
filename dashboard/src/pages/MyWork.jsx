@@ -19,11 +19,10 @@ export default function MyWork() {
   const { data, refetch } = useApi('/my-work', [], 5000);
   const [chatTask, setChatTask] = useState(null);
 
-  if (!data) return <div className="px-6 py-6 text-muted animate-pulse text-sm">Loading...</div>;
+  if (!data) return <div className="px-6 py-10 text-muted animate-pulse text-sm">Loading...</div>;
 
-  const { activeWork, planReviews, codeReviews, analyses, humanTasks, failed, recentlyCompleted, counts } = data;
+  const { activeWork, planReviews, codeReviews, analyses, humanTasks, failed, recentlyCompleted } = data;
 
-  // Merge all reviewable items into one queue
   const reviewQueue = [
     ...planReviews.map(t => ({ ...t, _kind: 'plan' })),
     ...codeReviews.map(t => ({ ...t, _kind: 'code' })),
@@ -31,15 +30,13 @@ export default function MyWork() {
     ...failed.map(t => ({ ...t, _kind: 'failed' })),
   ];
 
-  // Suggested = human tasks the PM thinks you should work on
   const suggested = humanTasks;
-
-  // Compact recently-done summary
   const agentDone = recentlyCompleted.filter(t => !t.worker?.startsWith('human'));
   const humanDone = recentlyCompleted.filter(t => t.worker?.startsWith('human'));
+  const isEmpty = activeWork.length === 0 && reviewQueue.length === 0 && suggested.length === 0 && recentlyCompleted.length === 0;
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-6 space-y-8">
+    <div className="max-w-2xl mx-auto px-6 py-6">
       {chatTask && (
         <div className="fixed inset-y-0 right-0 w-96 z-50 shadow-xl">
           <ChatPanel
@@ -52,91 +49,110 @@ export default function MyWork() {
         </div>
       )}
 
-      <h1 className="text-lg font-semibold">My Work</h1>
+      <div className="mb-8">
+        <h1 className="text-lg font-semibold text-text">My Work</h1>
+        {!isEmpty && (
+          <p className="text-xs text-muted mt-1">
+            {reviewQueue.length > 0 && <span>{reviewQueue.length} to review</span>}
+            {reviewQueue.length > 0 && activeWork.length > 0 && <span> · </span>}
+            {activeWork.length > 0 && <span>{activeWork.length} active</span>}
+            {(reviewQueue.length > 0 || activeWork.length > 0) && suggested.length > 0 && <span> · </span>}
+            {suggested.length > 0 && <span>{suggested.length} suggested</span>}
+          </p>
+        )}
+      </div>
 
-      {/* 1. Active sessions */}
-      <section>
-        <SectionHeader label="Your active sessions" count={activeWork.length} />
-        {activeWork.length === 0 ? (
-          <p className="text-xs text-vmuted py-3">Nothing active right now.</p>
-        ) : (
-          <div className="space-y-2">
-            {activeWork.map(t => (
-              <ActiveSessionCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
-            ))}
+      <div className="space-y-10">
+        {/* 1. Active sessions */}
+        {activeWork.length > 0 && (
+          <section>
+            <SectionHeader label="Active sessions" count={activeWork.length} />
+            <div className="space-y-3">
+              {activeWork.map(t => (
+                <ActiveSessionCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* 2. Review queue */}
+        {reviewQueue.length > 0 && (
+          <section>
+            <SectionHeader label="Needs review" count={reviewQueue.length} accent />
+            <div className="space-y-3">
+              {reviewQueue.map(t => (
+                <ReviewCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} navigate={navigate} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* 3. Suggested */}
+        {suggested.length > 0 && (
+          <section>
+            <SectionHeader label="Suggested next" count={suggested.length} />
+            <div className="space-y-2">
+              {suggested.map(t => (
+                <SuggestedCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* 4. Recently done */}
+        {recentlyCompleted.length > 0 && (
+          <section>
+            <SectionHeader label="Recently done" />
+            <div className="bg-card border border-border rounded-lg px-4 py-3">
+              <p className="text-xs text-muted leading-relaxed">
+                {agentDone.length > 0 && (
+                  <span><span className="text-text font-medium">{agentDone.length}</span> completed by agent</span>
+                )}
+                {agentDone.length > 0 && humanDone.length > 0 && <span>, </span>}
+                {humanDone.length > 0 && (
+                  <span><span className="text-text font-medium">{humanDone.length}</span> by you</span>
+                )}
+                <span className="text-vmuted"> — today</span>
+              </p>
+              {recentlyCompleted.length <= 8 && (
+                <div className="mt-2.5 space-y-1">
+                  {recentlyCompleted.map(t => (
+                    <div key={t.id} className="flex items-center gap-2.5 text-xs text-vmuted py-0.5">
+                      <span className="text-success text-[10px]">&#10003;</span>
+                      <span className="truncate flex-1">{t.title}</span>
+                      <span className="font-mono text-[10px] shrink-0 opacity-60">{t.worker?.startsWith('human') ? 'you' : 'agent'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Empty state */}
+        {isEmpty && (
+          <div className="text-center py-16">
+            <p className="text-sm text-muted">Nothing needs your attention.</p>
+            <p className="text-xs text-vmuted mt-1">All clear — the agent is handling things.</p>
           </div>
         )}
-      </section>
-
-      {/* 2. Review queue */}
-      {reviewQueue.length > 0 && (
-        <section>
-          <SectionHeader label="Review queue" count={reviewQueue.length} accent />
-          <div className="space-y-2">
-            {reviewQueue.map(t => (
-              <ReviewCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} navigate={navigate} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* 3. Suggested */}
-      {suggested.length > 0 && (
-        <section>
-          <SectionHeader label="Suggested" count={suggested.length} />
-          <div className="space-y-1.5">
-            {suggested.map(t => (
-              <SuggestedCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* 4. Recently done */}
-      {recentlyCompleted.length > 0 && (
-        <section>
-          <SectionHeader label="Recently done" />
-          <div className="px-3 py-2.5 bg-card border border-border rounded-lg">
-            <p className="text-xs text-muted">
-              {agentDone.length > 0 && (
-                <span><span className="text-text font-medium">{agentDone.length}</span> task{agentDone.length !== 1 ? 's' : ''} completed by agent</span>
-              )}
-              {agentDone.length > 0 && humanDone.length > 0 && <span>, </span>}
-              {humanDone.length > 0 && (
-                <span><span className="text-text font-medium">{humanDone.length}</span> by you</span>
-              )}
-              <span className="text-vmuted"> — today</span>
-            </p>
-            {recentlyCompleted.length <= 8 && (
-              <div className="mt-2 space-y-0.5">
-                {recentlyCompleted.map(t => (
-                  <div key={t.id} className="flex items-center gap-2 text-xs text-vmuted">
-                    <span className="text-success text-[10px]">✓</span>
-                    <span className="truncate flex-1">{t.title}</span>
-                    <span className="font-mono text-[10px] shrink-0">{t.worker?.startsWith('human') ? 'you' : 'agent'}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* Empty state */}
-      {activeWork.length === 0 && reviewQueue.length === 0 && suggested.length === 0 && recentlyCompleted.length === 0 && (
-        <div className="text-center py-12 text-vmuted text-sm">
-          Nothing needs your attention. All clear.
-        </div>
-      )}
+      </div>
     </div>
   );
 }
 
 function SectionHeader({ label, count, accent }) {
   return (
-    <h2 className={`text-xs font-mono uppercase tracking-wider mb-2 ${accent ? 'text-warning' : 'text-vmuted'}`}>
-      {label}{count != null ? ` (${count})` : ''}
-    </h2>
+    <div className="flex items-center gap-2 mb-3">
+      <h2 className={`text-[11px] font-mono uppercase tracking-wider ${accent ? 'text-warning' : 'text-vmuted'}`}>
+        {label}
+      </h2>
+      {count != null && (
+        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${accent ? 'bg-warning/10 text-warning' : 'bg-border/50 text-vmuted'}`}>
+          {count}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -162,33 +178,35 @@ function ActiveSessionCard({ task, onAction, onChat }) {
   };
 
   return (
-    <div className="bg-card border border-accent/30 rounded-lg px-4 py-3">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-        <span className="text-sm text-text flex-1 truncate">{task.title}</span>
-        <span className="text-[10px] font-mono text-vmuted">{task.project_name}</span>
+    <div className="bg-card border border-accent/30 rounded-lg p-4">
+      <div className="flex items-center gap-2.5 mb-1">
+        <span className="w-2 h-2 rounded-full bg-accent animate-pulse shrink-0" />
+        <span className="text-sm font-medium text-text flex-1 truncate">{task.title}</span>
       </div>
-      {task.branch_name && (
-        <p className="text-[10px] font-mono text-vmuted mb-2">branch: {task.branch_name}</p>
-      )}
+      <div className="flex items-center gap-2 ml-4.5 mb-3">
+        <span className="text-[10px] font-mono text-vmuted">{task.project_name}</span>
+        {task.branch_name && (
+          <span className="text-[10px] font-mono text-vmuted">· {task.branch_name}</span>
+        )}
+      </div>
       <div className="flex items-center gap-2">
         <button onClick={handleContinue}
-          className="px-3 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent/80 transition-colors font-medium">
+          className="px-4 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent/80 transition-colors font-medium">
           Continue
         </button>
         <button onClick={handleHandoff} disabled={acting}
-          className="px-3 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
+          className="px-3 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text hover:border-border transition-colors">
           Hand off
         </button>
         {onChat && (
           <button onClick={() => onChat(task)}
-            className="px-3 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
+            className="px-3 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text hover:border-border transition-colors">
             Chat
           </button>
         )}
         <input value={handoffNote} onChange={e => setHandoffNote(e.target.value)}
           placeholder="Note for agent..."
-          className="flex-1 bg-bg border border-border rounded px-2 py-1.5 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent" />
+          className="flex-1 bg-bg border border-border rounded-lg px-2.5 py-1.5 text-xs text-text placeholder:text-vmuted focus:outline-none focus:border-accent/50 transition-colors" />
       </div>
     </div>
   );
@@ -257,11 +275,11 @@ function ReviewCard({ task, onAction, onChat, navigate }) {
     finally { setActing(false); }
   };
 
-  const kindLabel = { plan: 'Plan', code: 'Code review', analysis: 'Analysis', failed: 'Failed' }[kind];
+  const kindLabel = { plan: 'Plan', code: 'Code', analysis: 'Analysis', failed: 'Failed' }[kind];
   const kindColor = { plan: 'text-accent', code: 'text-warning', analysis: 'text-research', failed: 'text-error' }[kind];
+  const kindBg = { plan: 'bg-accent/10', code: 'bg-warning/10', analysis: 'bg-research/10', failed: 'bg-error/10' }[kind];
   const borderColor = { plan: 'border-accent/20', code: 'border-warning/20', analysis: 'border-research/20', failed: 'border-error/20' }[kind];
 
-  // Try to show a clean feature-level name
   const displayName = task.feature_name || task.title;
   const changeSummary = failedError
     ? failedError
@@ -270,40 +288,39 @@ function ReviewCard({ task, onAction, onChat, navigate }) {
       : task.review_instructions?.slice(0, 120) || null;
 
   return (
-    <div className={`bg-card border ${borderColor} rounded-lg px-4 py-3`}>
+    <div className={`bg-card border ${borderColor} rounded-lg p-4`}>
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-0.5">
-            <span className={`text-[10px] font-mono uppercase ${kindColor}`}>{kindLabel}</span>
+          <div className="flex items-center gap-2 mb-1">
+            <span className={`text-[10px] font-mono uppercase px-1.5 py-0.5 rounded ${kindBg} ${kindColor}`}>{kindLabel}</span>
             <span className="text-[10px] font-mono text-vmuted">{task.project_name}</span>
           </div>
-          <p className="text-sm text-text truncate">{displayName}</p>
+          <p className="text-sm font-medium text-text truncate">{displayName}</p>
           {changeSummary && (
-            <p className="text-xs text-muted mt-0.5 truncate">{changeSummary}</p>
+            <p className="text-xs text-muted mt-1 line-clamp-2 leading-relaxed">{changeSummary}</p>
           )}
         </div>
 
-        {/* Primary actions — always visible, no expanding */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 pt-0.5">
           {kind === 'failed' ? (
             <>
               <button onClick={handleRetry} disabled={acting}
-                className="px-3 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
+                className="px-3.5 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
                 Retry
               </button>
               <button onClick={handleDismiss} disabled={acting}
-                className="px-3 py-1.5 text-xs text-error/70 hover:text-error border border-error/20 rounded-lg transition-colors">
+                className="px-3.5 py-1.5 text-xs text-error/80 hover:text-error border border-error/20 hover:border-error/40 rounded-lg transition-colors">
                 Dismiss
               </button>
             </>
           ) : (
             <>
               <button onClick={handleViewChanges} disabled={loadingDiff}
-                className="px-3 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
+                className="px-3.5 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
                 {loadingDiff ? '...' : showDiff ? 'Hide' : 'View changes'}
               </button>
               <button onClick={handleApprove} disabled={acting}
-                className="px-3 py-1.5 text-xs bg-success text-white rounded-lg hover:bg-success/80 disabled:opacity-50 transition-colors font-medium">
+                className="px-4 py-1.5 text-xs bg-success text-white rounded-lg hover:bg-success/80 disabled:opacity-50 transition-colors font-medium">
                 {acting ? '...' : 'Approve'}
               </button>
             </>
@@ -311,9 +328,8 @@ function ReviewCard({ task, onAction, onChat, navigate }) {
         </div>
       </div>
 
-      {/* Inline diff */}
       {showDiff && diff && (
-        <div className="mt-3 pt-3 border-t border-border">
+        <div className="mt-4 pt-3 border-t border-border">
           <pre className="text-[11px] font-mono text-muted overflow-x-auto max-h-64 overflow-y-auto leading-relaxed whitespace-pre-wrap">{diff.stat}</pre>
           <pre className="mt-2 text-[11px] font-mono text-muted overflow-x-auto max-h-96 overflow-y-auto leading-relaxed whitespace-pre-wrap">{diff.diff}</pre>
         </div>
@@ -337,20 +353,20 @@ function SuggestedCard({ task, onAction, onChat }) {
   };
 
   return (
-    <div className="flex items-center gap-3 bg-card border border-border rounded-lg px-4 py-2.5 hover:border-accent/20 transition-colors">
+    <div className="flex items-center gap-3 bg-card border border-border rounded-lg px-4 py-3 hover:border-accent/30 transition-colors">
       <div className="flex-1 min-w-0">
         <p className="text-sm text-text truncate">{task.title}</p>
         <span className="text-[10px] font-mono text-vmuted">{task.project_name}</span>
       </div>
-      <div className="flex items-center gap-1.5 shrink-0">
+      <div className="flex items-center gap-2 shrink-0">
         {onChat && (
           <button onClick={() => onChat(task)}
-            className="px-2.5 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
+            className="px-3 py-1.5 text-xs border border-border rounded-lg text-muted hover:text-text transition-colors">
             Chat
           </button>
         )}
         <button onClick={handleStartWork} disabled={acting}
-          className="px-3 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition-colors font-medium">
+          className="px-4 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent/80 disabled:opacity-50 transition-colors font-medium">
           Work on this
         </button>
       </div>
