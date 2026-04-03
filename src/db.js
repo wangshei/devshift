@@ -372,6 +372,33 @@ function migrate() {
     }
   } catch {}
 
+  // Migration: chat_sessions and chat_messages for persistent multi-session chat
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+      id TEXT PRIMARY KEY,
+      project_id TEXT REFERENCES projects(id),
+      task_id TEXT,
+      title TEXT NOT NULL,
+      claude_session_id TEXT,
+      mode TEXT DEFAULT 'think',
+      model TEXT DEFAULT 'sonnet',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL REFERENCES chat_sessions(id),
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      tool_calls TEXT,
+      cost REAL,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   log.info('Database migration complete');
 }
 

@@ -10,6 +10,7 @@ import Timeline from './pages/Timeline';
 import MyWork from './pages/MyWork';
 import ProductMap from './pages/ProductMap';
 import ThemeToggle from './components/ThemeToggle';
+import Chat from './pages/Chat';
 
 function App() {
   const [needsSetup, setNeedsSetup] = useState(null);
@@ -62,6 +63,7 @@ function App() {
             <Route path="/my-work" element={<MyWork />} />
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/chat" element={<Chat />} />
           </Routes>
         </main>
       </div>
@@ -76,6 +78,7 @@ function App() {
             <Route path="/my-work" element={<MyWork />} />
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/chat" element={<Chat />} />
           </Routes>
         </main>
         <MobileBottomNav />

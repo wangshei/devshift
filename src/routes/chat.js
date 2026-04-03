@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const { spawn } = require('child_process');
+const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db');
 const log = require('../utils/logger');
 
@@ -7,6 +8,44 @@ const router = Router();
 
 // Active chat processes (sessionId → process info)
 const activeSessions = new Map();
+
+// GET /api/chat/sessions — list all sessions
+router.get('/sessions', (req, res) => {
+  const db = getDb();
+  const sessions = db.prepare(`
+    SELECT s.*, p.name as project_name,
+      (SELECT content FROM chat_messages WHERE session_id = s.id ORDER BY created_at DESC LIMIT 1) as last_message
+    FROM chat_sessions s
+    LEFT JOIN projects p ON s.project_id = p.id
+    ORDER BY s.updated_at DESC
+  `).all();
+  res.json(sessions);
+});
+
+// POST /api/chat/sessions — create a new session
+router.post('/sessions', (req, res) => {
+  const db = getDb();
+  const { project_id, task_id, title, mode, model } = req.body;
+  const id = uuidv4();
+  db.prepare('INSERT INTO chat_sessions (id, project_id, task_id, title, mode, model) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, project_id || null, task_id || null, title || 'New chat', mode || 'think', model || 'sonnet');
+  res.status(201).json(db.prepare('SELECT * FROM chat_sessions WHERE id = ?').get(id));
+});
+
+// DELETE /api/chat/sessions/:id
+router.delete('/sessions/:id', (req, res) => {
+  const db = getDb();
+  db.prepare('DELETE FROM chat_messages WHERE session_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM chat_sessions WHERE id = ?').run(req.params.id);
+  res.json({ deleted: true });
+});
+
+// GET /api/chat/sessions/:id/messages — get message history
+router.get('/sessions/:id/messages', (req, res) => {
+  const db = getDb();
+  const messages = db.prepare('SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC').all(req.params.id);
+  res.json(messages);
+});
 
 /**
  * POST /api/chat/send — send a message and stream the response via SSE
@@ -20,7 +59,7 @@ const activeSessions = new Map();
  */
 router.post('/send', (req, res) => {
   const db = getDb();
-  const { taskId, message, model, mode, projectId: bodyProjectId } = req.body;
+  const { taskId, message, model, mode, projectId: bodyProjectId, sessionId: dbSessionId } = req.body;
 
   if (!message?.trim()) {
     return res.status(400).json({ error: 'Message required' });
@@ -41,6 +80,16 @@ router.post('/send', (req, res) => {
   // If no task but projectId provided, load project directly
   if (!project && bodyProjectId) {
     project = db.prepare('SELECT * FROM projects WHERE id = ?').get(bodyProjectId);
+  }
+
+  // Load DB session (our persistent session, not Claude's session)
+  let dbSession = null;
+  if (dbSessionId) {
+    dbSession = db.prepare('SELECT * FROM chat_sessions WHERE id = ?').get(dbSessionId);
+    if (dbSession?.claude_session_id) sessionId = dbSession.claude_session_id;
+    if (dbSession?.project_id && !project) {
+      project = db.prepare('SELECT * FROM projects WHERE id = ?').get(dbSession.project_id);
+    }
   }
 
   let enrichedMessage = message.trim();
@@ -179,6 +228,33 @@ router.post('/send', (req, res) => {
       try {
         db.prepare('UPDATE tasks SET session_id = ? WHERE id = ?').run(newSessionId, taskId);
       } catch {}
+    }
+
+    // Save messages to DB for persistence
+    if (dbSessionId || dbSession) {
+      const sid = dbSessionId || dbSession?.id;
+      try {
+        // Save user message
+        db.prepare('INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)')
+          .run(sid, 'user', message.trim());
+        // Save assistant response
+        if (fullOutput) {
+          let resultText = fullOutput;
+          try { resultText = JSON.parse(fullOutput)?.result || fullOutput; } catch {}
+          // Try to get from the last result event
+          const resultMatch = fullOutput.match(/"result":"((?:[^"\\]|\\.)*)"/);
+          if (resultMatch) {
+            try { resultText = JSON.parse('"' + resultMatch[1] + '"'); } catch {}
+          }
+          db.prepare('INSERT INTO chat_messages (session_id, role, content, cost) VALUES (?, ?, ?, ?)')
+            .run(sid, 'assistant', resultText, cost);
+        }
+        // Update session with Claude's session_id and timestamp
+        db.prepare("UPDATE chat_sessions SET claude_session_id = ?, updated_at = datetime('now') WHERE id = ?")
+          .run(newSessionId, sid);
+      } catch (e) {
+        log.debug('[Chat] Failed to save messages: ' + e.message);
+      }
     }
 
     res.write(`data: ${JSON.stringify({ type: 'close', code, sessionId: newSessionId })}\n\n`);

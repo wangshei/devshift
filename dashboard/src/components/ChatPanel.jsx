@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { api, useApi } from '../hooks/useApi';
 import Markdown from './Markdown';
 
-export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPushed }) {
+export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPushed, dbSessionId, initialSessionId }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -28,6 +28,27 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
     inputRef.current?.focus();
   }, []);
 
+  // Load message history for persistent sessions
+  useEffect(() => {
+    if (dbSessionId) {
+      api(`/chat/sessions/${dbSessionId}/messages`).then(msgs => {
+        if (msgs?.length > 0) {
+          setMessages(msgs.map(m => ({
+            role: m.role,
+            content: m.content,
+            cost: m.cost,
+            tools: m.tool_calls ? JSON.parse(m.tool_calls) : [],
+          })));
+        }
+      }).catch(() => {});
+    }
+  }, [dbSessionId]);
+
+  // Use initial Claude session for resumption
+  useEffect(() => {
+    if (initialSessionId) setSessionId(initialSessionId);
+  }, [initialSessionId]);
+
   const handleSend = async () => {
     const text = input.trim();
     if (!text || sending) return;
@@ -45,7 +66,7 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
       const response = await fetch('/api/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId, projectId, message: text, mode: chatMode, model: chatMode === 'think' ? 'sonnet' : undefined }),
+        body: JSON.stringify({ taskId, projectId, message: text, mode: chatMode, model: chatMode === 'think' ? 'sonnet' : undefined, sessionId: dbSessionId }),
       });
 
       const reader = response.body.getReader();
