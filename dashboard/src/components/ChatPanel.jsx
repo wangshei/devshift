@@ -213,7 +213,7 @@ export default function ChatPanel({ taskId, projectId, taskTitle, onClose, onPus
             </button>
           )}
           {onClose && (
-            <button onClick={onClose} className="text-vmuted hover:text-muted text-sm">&#x2715;</button>
+            <button onClick={onClose} data-dismiss="escape" className="text-vmuted hover:text-muted text-sm">&#x2715;</button>
           )}
         </div>
       </div>

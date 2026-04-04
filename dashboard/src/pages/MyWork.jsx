@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApi, api } from '../hooks/useApi';
 import ChatPanel from '../components/ChatPanel';
+import { useToast } from '../components/Toast';
 
 function humanizeError(error) {
   if (!error) return 'Unknown error';
@@ -16,10 +17,28 @@ function humanizeError(error) {
 
 export default function MyWork() {
   const navigate = useNavigate();
+  const toast = useToast();
   const { data, refetch } = useApi('/my-work', [], 5000);
   const [chatTask, setChatTask] = useState(null);
 
-  if (!data) return <div className="px-6 py-6 text-muted animate-pulse text-sm">Loading...</div>;
+  if (!data) return (
+    <div className="max-w-2xl mx-auto px-6 py-6 space-y-8">
+      <div className="h-6 w-24 bg-border/50 rounded animate-pulse" />
+      <div className="space-y-4">
+        <div className="h-3 w-32 bg-border/50 rounded animate-pulse" />
+        {[1, 2, 3].map(i => (
+          <div key={i} className="bg-card border border-border rounded-lg px-4 py-3 space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-2 rounded-full bg-border/50 animate-pulse" />
+              <div className="h-4 bg-border/50 rounded animate-pulse flex-1 max-w-[250px]" />
+              <div className="h-3 w-16 bg-border/50 rounded animate-pulse" />
+            </div>
+            <div className="h-3 bg-border/50 rounded animate-pulse max-w-[180px]" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   const { activeWork, planReviews, codeReviews, analyses, humanTasks, failed, recentlyCompleted, counts } = data;
 
@@ -62,7 +81,7 @@ export default function MyWork() {
         ) : (
           <div className="space-y-2">
             {activeWork.map(t => (
-              <ActiveSessionCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
+              <ActiveSessionCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} toast={toast} />
             ))}
           </div>
         )}
@@ -74,7 +93,7 @@ export default function MyWork() {
           <SectionHeader label="Review queue" count={reviewQueue.length} accent />
           <div className="space-y-2">
             {reviewQueue.map(t => (
-              <ReviewCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} navigate={navigate} />
+              <ReviewCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} navigate={navigate} toast={toast} />
             ))}
           </div>
         </section>
@@ -86,7 +105,7 @@ export default function MyWork() {
           <SectionHeader label="Suggested" count={suggested.length} />
           <div className="space-y-1.5">
             {suggested.map(t => (
-              <SuggestedCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} />
+              <SuggestedCard key={t.id} task={t} onAction={refetch} onChat={setChatTask} toast={toast} />
             ))}
           </div>
         </section>
@@ -140,7 +159,7 @@ function SectionHeader({ label, count, accent }) {
   );
 }
 
-function ActiveSessionCard({ task, onAction, onChat }) {
+function ActiveSessionCard({ task, onAction, onChat, toast }) {
   const [handoffNote, setHandoffNote] = useState('');
   const [acting, setActing] = useState(false);
 
@@ -148,7 +167,7 @@ function ActiveSessionCard({ task, onAction, onChat }) {
     try {
       await api(`/tasks/${task.id}/takeover`, { method: 'POST' });
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   };
 
@@ -194,7 +213,7 @@ function ActiveSessionCard({ task, onAction, onChat }) {
   );
 }
 
-function ReviewCard({ task, onAction, onChat, navigate }) {
+function ReviewCard({ task, onAction, onChat, navigate, toast }) {
   const [acting, setActing] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [diff, setDiff] = useState(null);
@@ -233,9 +252,10 @@ function ReviewCard({ task, onAction, onChat, navigate }) {
       } else {
         await api(`/tasks/${task.id}/approve`, { method: 'POST' });
       }
+      toast.success('Approved');
       onAction?.();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     } finally { setActing(false); }
   };
 
@@ -322,17 +342,17 @@ function ReviewCard({ task, onAction, onChat, navigate }) {
   );
 }
 
-function SuggestedCard({ task, onAction, onChat }) {
+function SuggestedCard({ task, onAction, onChat, toast }) {
   const [acting, setActing] = useState(false);
 
   const handleStartWork = async () => {
     setActing(true);
     try {
       const result = await api(`/tasks/${task.id}/start-work`, { method: 'POST' });
-      if (result.error) alert(result.error);
+      if (result.error) toast.error(result.error);
       onAction?.();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     } finally { setActing(false); }
   };
 

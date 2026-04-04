@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApi, api } from '../hooks/useApi';
 import SplitDiffViewer from './SplitDiffViewer';
 import Markdown from './Markdown';
+import { useToast } from './Toast';
 
 const TIER_LABELS = { 1: 'Auto', 2: 'Review', 3: 'Research' };
 
@@ -217,7 +218,7 @@ function PlanReviewCard({ task, onAction }) {
       await api(`/tasks/${subtaskId}`, { method: 'DELETE' });
       setSubtasks(prev => (prev ?? currentSubtasks).filter(s => s.id !== subtaskId));
     } catch (e) {
-      alert('Could not remove subtask: ' + e.message);
+      toast.error('Could not remove subtask: ' + e.message);
     }
   };
 
@@ -231,7 +232,7 @@ function PlanReviewCard({ task, onAction }) {
       await api(`/tasks/${task.id}/approve-plan`, { method: 'POST' });
       onAction?.();
     } catch (e) {
-      alert('Could not approve plan: ' + e.message);
+      toast.error('Could not approve plan: ' + e.message);
     } finally { setApproving(false); }
   };
 
@@ -295,6 +296,7 @@ function PlanReviewCard({ task, onAction }) {
 }
 
 export default function HumanTaskCard({ task, onAction, onChat }) {
+  const toast = useToast();
   const [showDiff, setShowDiff] = useState(false);
   const [diff, setDiff] = useState(null);
   const [loading, setLoading] = useState(false);

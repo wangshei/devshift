@@ -124,6 +124,7 @@ export default function TaskInput({ onTaskAdded, fixedProjectId = null }) {
           onChange={e => setTitle(e.target.value)}
           placeholder={isWorking ? '' : 'Describe a task in plain English...'}
           disabled={isWorking}
+          data-shortcut="quick-add"
           className="flex-1 bg-card border border-border rounded-lg px-3 py-2 text-sm text-text placeholder:text-vmuted focus:outline-none focus:border-accent disabled:opacity-50"
         />
         <button

@@ -11,6 +11,7 @@ import MyWork from './pages/MyWork';
 import ProductMap from './pages/ProductMap';
 import ThemeToggle from './components/ThemeToggle';
 import Chat from './pages/Chat';
+import { ToastProvider } from './components/Toast';
 
 function App() {
   const [needsSetup, setNeedsSetup] = useState(null);
@@ -52,40 +53,86 @@ function App() {
 
   return (
     <BrowserRouter>
-      {/* Desktop: sidebar + main content */}
-      <div className="hidden md:flex h-screen overflow-hidden">
-        <Sidebar />
-        <main className="flex-1 overflow-y-auto bg-bg">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/project/:id" element={<ProjectFeed />} />
-            <Route path="/project/:id/map" element={<ProductMap />} />
-            <Route path="/my-work" element={<MyWork />} />
-            <Route path="/timeline" element={<Timeline />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/chat" element={<Chat />} />
-          </Routes>
-        </main>
-      </div>
+      <ToastProvider>
+        <KeyboardShortcuts />
+        {/* Desktop: sidebar + main content */}
+        <div className="hidden md:flex h-screen overflow-hidden">
+          <Sidebar />
+          <main className="flex-1 overflow-y-auto bg-bg">
+            <AnimatedRoutes />
+          </main>
+        </div>
 
-      {/* Mobile: full screen with bottom nav */}
-      <div className="md:hidden flex flex-col min-h-screen bg-bg">
-        <main className="flex-1 overflow-y-auto pb-16">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/project/:id" element={<ProjectFeed />} />
-            <Route path="/project/:id/map" element={<ProductMap />} />
-            <Route path="/my-work" element={<MyWork />} />
-            <Route path="/timeline" element={<Timeline />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/chat" element={<Chat />} />
-          </Routes>
-        </main>
-        <MobileBottomNav />
-      </div>
+        {/* Mobile: full screen with bottom nav */}
+        <div className="md:hidden flex flex-col min-h-screen bg-bg">
+          <main className="flex-1 overflow-y-auto pb-16">
+            <AnimatedRoutes />
+          </main>
+          <MobileBottomNav />
+        </div>
 
-      <ThemeToggle />
+        <ThemeToggle />
+      </ToastProvider>
     </BrowserRouter>
+  );
+}
+
+function KeyboardShortcuts() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    function handleKeyDown(e) {
+      const meta = e.metaKey || e.ctrlKey;
+      const tag = e.target.tagName;
+      const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable;
+
+      // Escape: close chat panels / modals (works even in inputs)
+      if (e.key === 'Escape') {
+        document.querySelectorAll('[data-dismiss="escape"]').forEach(el => el.click());
+        return;
+      }
+
+      // Cmd+K: focus task input
+      if (meta && e.key === 'k') {
+        e.preventDefault();
+        const input = document.querySelector('[data-shortcut="quick-add"]');
+        if (input) input.focus();
+        return;
+      }
+
+      // Don't handle number shortcuts when typing
+      if (isInput) return;
+
+      // Cmd+1/2/3/4: navigate
+      if (meta && e.key >= '1' && e.key <= '4') {
+        e.preventDefault();
+        const routes = ['/', '/my-work', '/timeline', '/settings'];
+        navigate(routes[parseInt(e.key) - 1]);
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [navigate]);
+
+  return null;
+}
+
+function AnimatedRoutes() {
+  const location = useLocation();
+
+  return (
+    <div key={location.pathname} className="animate-page-in">
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/project/:id" element={<ProjectFeed />} />
+        <Route path="/project/:id/map" element={<ProductMap />} />
+        <Route path="/my-work" element={<MyWork />} />
+        <Route path="/timeline" element={<Timeline />} />
+        <Route path="/settings" element={<Settings />} />
+        <Route path="/chat" element={<Chat />} />
+      </Routes>
+    </div>
   );
 }
 
